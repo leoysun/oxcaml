@@ -40,21 +40,3 @@ RUN curl -L -o /usr/bin/opam https://github.com/ocaml/opam/releases/download/2.3
 RUN df -h
 
 USER ${USERNAME}
-
-# CR mshinwell/avsm: use a hash for --repos, but will need to restore the
-# URL afterwards for any user opam update commands.
-RUN opam init -a --disable-sandboxing --yes --bare && \
-        opam update -a && \
-        opam switch create 5.2.0+ox --yes \
-        --repos "ox=git+https://github.com/oxcaml/opam-repository.git,default" && \
-        eval $(opam env --switch 5.2.0+ox) && \
-        opam install --yes ocamlformat && \
-        opam install --yes merlin && \
-        opam install --yes ocaml-lsp-server && \
-        opam install --yes utop && \
-        opam install --yes parallel && \
-        opam install --yes core_unix
-
-RUN df -h
-
-USER root
