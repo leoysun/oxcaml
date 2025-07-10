@@ -1,5 +1,5 @@
 (executables
- (modes byte exe)
+ (modes js)
  (names main)
  (libraries bonsai bonsai_web core)
  (preprocess
