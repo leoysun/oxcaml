@@ -9,7 +9,8 @@
                         "extensions": [
                                 "ocamllabs.ocaml-platform",
                                 "ms-vscode.cpptools",
-                                "eamodio.gitlens"
+                                "eamodio.gitlens",
+                                "Shuumatsu.vscode-ocamlformat"
                         ]
                 }
         }

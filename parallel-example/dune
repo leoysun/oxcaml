@@ -1,6 +1,0 @@
-(library
- (name parallel_example)
- (public_name parallel_example)
- (libraries base parallel parallel_scheduler_work_stealing portable stdio)
- (preprocess
-  (pps ppx_jane)))
