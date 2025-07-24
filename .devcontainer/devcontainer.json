@@ -1,6 +1,5 @@
 {
-        //"build": {      "dockerfile": "Dockerfile" },
-        "image": "ghcr.io/oxcaml/playground",
+        "build": {      "dockerfile": "Dockerfile" },
         "name": "OxCaml Playground",
         "customizations": {
                 "vscode": {
