@@ -3,20 +3,19 @@ FROM mcr.microsoft.com/devcontainers/universal
 
 RUN df -h
 
-RUN rm -rf /usr/share/dotnet /usr/local/lib/android /usr/local/php /usr/local/py-utils \
-        /usr/local/python /usr/local/rvm /opt/ghc /opt/hostedtoolcache/CodeQL /opt/conda /opt/dotnet \
-        /home/codespace/.local/lib/python3.12
-
-RUN df -h
-
 RUN du -sh /*
 RUN du -sh /usr/*
 RUN du -sh /usr/local/*
 RUN du -sh /opt/*
 RUN ls -l /
 RUN find / -type f -exec du -h {} + | sort -rh | head -100
-RUN some-command-will-fail
 
+
+RUN rm -rf /usr/share/dotnet /usr/local/lib/android /usr/local/php /usr/local/py-utils \
+        /usr/local/python /usr/local/rvm /opt/ghc /opt/hostedtoolcache/CodeQL /opt/conda /opt/dotnet \
+        /home/codespace/.local/lib/python3.12
+
+RUN df -h
 
 RUN cd /root && \
         curl -L -o autoconf.tar.gz https://ftp.gnu.org/gnu/autoconf/autoconf-2.71.tar.gz && \
