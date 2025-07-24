@@ -10,6 +10,14 @@ Once initialized you should have a full OPAM environment with the OxCaml compile
 ## Building your first OxCaml project
 
 ```shell
+$ eval $(opam env --switch 5.2.0+ox) && \
+        opam install --yes utop && \
+        opam install --yes parallel && \
+        opam install --yes core_unix
+
+
+Old:
+
 $ opam init -a --disable-sandboxing --yes --bare && \
         opam update -a && \
         opam switch create 5.2.0+ox --yes \
