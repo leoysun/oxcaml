@@ -52,19 +52,19 @@ RUN opam init -a --disable-sandboxing --yes --bare && \
 RUN df -h
 
 RUN eval $(opam env --switch 5.2.0+ox) && \
-        opam install -j 1 --keep-build-dir=false --yes ocamlformat && \
+        opam install -j 1  --yes ocamlformat && \
         opam clean
 
 RUN df -h
 
 RUN eval $(opam env --switch 5.2.0+ox) && \        
-        opam install -j 1 --keep-build-dir=false --yes merlin && \
+        opam install -j 1 --yes merlin && \
         opam clean
 
 RUN df -h
 
 RUN eval $(opam env --switch 5.2.0+ox) && \          
-        opam install -j 1 --keep-build-dir=false --yes ocaml-lsp-server && \
+        opam install -j 1  --yes ocaml-lsp-server && \
         opam clean
 
 RUN df -h
