@@ -25,4 +25,8 @@ opam exec -- dune fmt
 dune build --watch
 dune build --watch --terminal-persistence=clear-on-rebuild-and-flush-history
 
+
+cp bonsai/index.html _build/default/bonsai
+cd _build/default/bonsai
+python -m http.server 8000
 ```
