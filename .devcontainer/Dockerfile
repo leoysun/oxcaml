@@ -83,6 +83,12 @@ RUN eval $(opam env --switch 5.2.0+ox) && \
 RUN df -h
 
 RUN eval $(opam env --switch 5.2.0+ox) && \          
+        opam install -j 1  --yes async && \
+        opam clean
+
+RUN df -h
+
+RUN eval $(opam env --switch 5.2.0+ox) && \          
         opam install -j 1  --yes ocaml-lsp-server && \
         opam clean
 
