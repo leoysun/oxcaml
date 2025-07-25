@@ -3,6 +3,14 @@ FROM mcr.microsoft.com/devcontainers/universal
 
 RUN df -h
 
+RUN rm -rf /usr/share/dotnet /usr/local/lib/android /usr/local/php /usr/local/py-utils \
+        /usr/local/python /usr/local/rvm /usr/local/sdkman /usr/local/share/nvm \
+        /opt/ghc /opt/hostedtoolcache/CodeQL /opt/conda /opt/dotnet \
+        /home/codespace/.local/lib/python3.12
+
+RUN df -h
+
+
 RUN du -sh /usr/*
 RUN du -sh /usr/local/*
 RUN du -sh /opt/*
@@ -11,11 +19,17 @@ RUN find /usr -type f -exec du -h {} + | sort -rh | head -100
 RUN find /opt -type f -exec du -h {} + | sort -rh | head -100
 RUN find /home -type f -exec du -h {} + | sort -rh | head -100
 
-RUN rm -rf /usr/share/dotnet /usr/local/lib/android /usr/local/php /usr/local/py-utils \
-        /usr/local/python /usr/local/rvm /opt/ghc /opt/hostedtoolcache/CodeQL /opt/conda /opt/dotnet \
-        /home/codespace/.local/lib/python3.12
-
-RUN df -h
+RUN find /dev -type f -exec du -h {} + | sort -rh | head -100
+RUN find /etc -type f -exec du -h {} + | sort -rh | head -100
+RUN find /media -type f -exec du -h {} + | sort -rh | head -100
+RUN find /mnt -type f -exec du -h {} + | sort -rh | head -100
+RUN find /proc -type f -exec du -h {} + | sort -rh | head -100
+RUN find /root -type f -exec du -h {} + | sort -rh | head -100
+RUN find /run -type f -exec du -h {} + | sort -rh | head -100
+RUN find /srv -type f -exec du -h {} + | sort -rh | head -100
+RUN find /tmp -type f -exec du -h {} + | sort -rh | head -100
+RUN find /var -type f -exec du -h {} + | sort -rh | head -100
+RUN find / -type f -exec du -h {} + | sort -rh | head -100 || true
 
 RUN cd /root && \
         curl -L -o autoconf.tar.gz https://ftp.gnu.org/gnu/autoconf/autoconf-2.71.tar.gz && \
