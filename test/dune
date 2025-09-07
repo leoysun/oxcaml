@@ -3,4 +3,4 @@
  (libraries core tictactoe_logic_library) 
  (name tictactoe_test_library)
  (inline_tests)
- (preprocess (pps ppx_jane ppx_inline_test)))
+ (preprocess (pps ppx_jane)))
