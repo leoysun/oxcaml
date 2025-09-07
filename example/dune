@@ -1,6 +1,0 @@
-(library
- (name example)
- (public_name example)
- (libraries base parallel portable stdio)
- (preprocess
-  (pps ppx_jane)))

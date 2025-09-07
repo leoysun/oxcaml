@@ -1,5 +1,0 @@
-# OCamlFormat configuration file
-version = unknown
-profile = janestreet
-wrap-comments = true
-max-indent = 100
