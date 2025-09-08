@@ -1,16 +1,10 @@
-# A playground for OxCaml
+# TicTacToe using OxCaml
 
-**(Disclaimer: currently in alpha)**
+To make a dev-environment, press the green "Code" button, then select "+" next to "Codespaces".  A new Codespace will open.  It currently takes 20-40 minutes to initialize; please be patient.
 
-To make a playground, press the green "Code" button, then select "+" next to "Codespaces".  A new Codespace will open.  It currently takes maybe 20 or 30 minutes to initialize; please be patient.  We'll work on improving this startup time shortly.
-You can click the link in the status popup in the bottom-right of the window to see current progress (although there are no spinners).
-
-Once initialized you should have a full OPAM environment with the OxCaml compiler and dune on the path.  VSCode will have the OCaml Platform plugin together with the LSP server and merlin, the editor assistant.
-
-## Building your first OxCaml project
-
+Once initialized you need to run the following commands:
 ```shell
-$ eval $(opam env --switch 5.2.0+ox) && 
+eval $(opam env --switch 5.2.0+ox) && 
         opam install -j 1  --yes ocamlformat && 
         opam install -j 1 --yes merlin && 
         opam install -j 1  --yes async && 
@@ -22,15 +16,32 @@ $ eval $(opam env --switch 5.2.0+ox) &&
                 async async_extra async_js async_kernel async_rpc_kernel async_rpc_websocket \
                 base core core_kernel ocaml-embed-file \
                 ppx_jane virtual_dom cohttp cohttp-async uri \
-                bonsai bonsai_web js_of_ocaml js_of_ocaml-ppx 
-
-cd example
-dune fmt
-dune build @runtest --watch
-dune promote
-dune build --watch --terminal-persistence=clear-on-rebuild-and-flush-history
-
-cp _build/default/ui/tictactoe_ui.bc.js generated_js/
-python -m http.server 8000
+                bonsai bonsai_web js_of_ocaml js_of_ocaml-ppx
 ```
+
+Afterwards you should have a full OPAM environment with the OxCaml compiler and dune on the path.  VSCode will have the OCaml Platform plugin together with the LSP server and merlin, the editor assistant.
+
+## Building the OxCaml project
+To format the files:
+```shell
+dune fmt
+```
+
+To build and run tests continously:
+```shell
+dune build @runtest --watch
+```
+
+To promote/update expect-tests:
+```shell
+dune promote
+```
+
+To update the javascript:
+```shell
+cp _build/default/ui/tictactoe_ui.bc.js generated_js/
+```
+Then commit the changes and surf to your github.io to see you site:
+https://yoav-zibin.github.io/oxcaml/
+
 
