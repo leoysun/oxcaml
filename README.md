@@ -4,7 +4,7 @@ To make a dev-environment, press the green "Code" button, then select "+" next t
 
 Once initialized you need to run the following commands:
 ```shell
-$ eval $(opam env --switch 5.2.0+ox) && 
+eval $(opam env --switch 5.2.0+ox) && 
         opam install -j 1  --yes --locked ocamlformat && 
         opam install -j 1 --yes --locked merlin && 
         opam install -j 1  --yes --locked async && 
