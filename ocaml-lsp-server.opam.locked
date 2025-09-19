@@ -1,0 +1,174 @@
+opam-version: "2.0"
+name: "ocaml-lsp-server"
+version: "1.19.0+ox"
+synopsis: "LSP Server for OCaml"
+description: "An LSP server for OCaml."
+maintainer: "Rudi Grinberg <me@rgrinberg.com>"
+authors: [
+  "Andrey Popp <8mayday@gmail.com>"
+  "Rusty Key <iam@stfoo.ru>"
+  "Louis Roché <louis@louisroche.net>"
+  "Oleksiy Golovko <alexei.golovko@gmail.com>"
+  "Rudi Grinberg <me@rgrinberg.com>"
+  "Sacha Ayoun <sachaayoun@gmail.com>"
+  "cannorin <cannorin@gmail.com>"
+  "Ulugbek Abdullaev <ulugbekna@gmail.com>"
+  "Thibaut Mattio <thibaut.mattio@gmail.com>"
+  "Max Lantas <mnxndev@outlook.com>"
+]
+license: "ISC"
+homepage: "https://github.com/ocaml/ocaml-lsp"
+bug-reports: "https://github.com/ocaml/ocaml-lsp/issues"
+depends: [
+  "astring" {= "0.8.5"}
+  "async" {= "v0.18~preview.130.36+326"}
+  "async_kernel" {= "v0.18~preview.130.36+326"}
+  "async_log" {= "v0.18~preview.130.36+326"}
+  "async_rpc_kernel" {= "v0.18~preview.130.36+326"}
+  "async_unix" {= "v0.18~preview.130.36+326"}
+  "backoff" {= "0.1.1+ox"}
+  "base" {= "v0.18~preview.130.36+326"}
+  "base-bigarray" {= "base"}
+  "base-domains" {= "base"}
+  "base-nnp" {= "base"}
+  "base-threads" {= "base"}
+  "base-unix" {= "base"}
+  "base_bigstring" {= "v0.18~preview.130.36+326"}
+  "base_quickcheck" {= "v0.18~preview.130.36+326"}
+  "basement" {= "v0.18~preview.130.36+326"}
+  "bigarray-compat" {= "1.1.0"}
+  "bin_prot" {= "v0.18~preview.130.36+326"}
+  "camlp-streams" {= "5.0.1"}
+  "capitalization" {= "v0.18~preview.130.36+326"}
+  "chrome-trace" {= "3.20.1"}
+  "cmarkit" {= "0.3.0"}
+  "cmdliner" {= "1.3.0"}
+  "conf-autoconf" {= "0.2"}
+  "conf-bash" {= "1"}
+  "conf-g++" {= "1.0"}
+  "conf-which" {= "1"}
+  "core" {= "v0.18~preview.130.36+326"}
+  "core_extended" {= "v0.18~preview.130.36+326"}
+  "core_kernel" {= "v0.18~preview.130.36+326"}
+  "core_unix" {= "v0.18~preview.130.36+326"}
+  "csexp" {= "1.5.2"}
+  "cstruct" {= "6.0.1"}
+  "dune" {= "3.20.1"}
+  "dune-build-info" {= "3.20.1"}
+  "dune-configurator" {= "3.20.1"}
+  "dune-rpc" {= "3.20.1"}
+  "dyn" {= "3.20.1"}
+  "expect_test_helpers_core" {= "v0.18~preview.130.36+326"}
+  "expectree" {= "v0.18~preview.130.36+326"}
+  "fiber" {= "3.7.0"}
+  "fieldslib" {= "v0.18~preview.130.36+326"}
+  "int_repr" {= "v0.18~preview.130.36+326"}
+  "jane-street-headers" {= "v0.18~preview.130.36+326"}
+  "jane_rope" {= "v0.18~preview.130.36+326"}
+  "jsonrpc" {= "1.19.0+ox"}
+  "jst-config" {= "v0.18~preview.130.36+326"}
+  "lsp" {= "1.19.0+ox"}
+  "merlin-lib" {= "5.2.1-502+ox"}
+  "num" {= "1.6"}
+  "ocaml" {= "5.2.0"}
+  "ocaml-compiler-libs" {= "v0.17.0+ox"}
+  "ocaml-config" {= "3"}
+  "ocaml-index" {= "1.1+ox"}
+  "ocaml-options-vanilla" {= "1"}
+  "ocaml-variants" {= "5.2.0+ox"}
+  "ocaml_intrinsics_kernel" {= "v0.18~preview.130.36+326"}
+  "ocamlbuild" {= "0.15.0+ox"}
+  "ocamlc-loc" {= "3.20.1"}
+  "ocamlfind" {= "1.9.8"}
+  "ocamlformat-rpc-lib" {= "0.27.0"}
+  "odoc-parser" {= "3.1.0+ox"}
+  "ordering" {= "3.20.1"}
+  "parsexp" {= "v0.18~preview.130.36+326"}
+  "pipe_with_writer_error" {= "v0.18~preview.130.36+326"}
+  "portable" {= "v0.18~preview.130.36+326"}
+  "pp" {= "2.0.0"}
+  "ppx_assert" {= "v0.18~preview.130.36+326"}
+  "ppx_base" {= "v0.18~preview.130.36+326"}
+  "ppx_bench" {= "v0.18~preview.130.36+326"}
+  "ppx_bin_prot" {= "v0.18~preview.130.36+326"}
+  "ppx_cold" {= "v0.18~preview.130.36+326"}
+  "ppx_compare" {= "v0.18~preview.130.36+326"}
+  "ppx_custom_printf" {= "v0.18~preview.130.36+326"}
+  "ppx_derivers" {= "1.2.1"}
+  "ppx_diff" {= "v0.18~preview.130.36+326"}
+  "ppx_disable_unused_warnings" {= "v0.18~preview.130.36+326"}
+  "ppx_enumerate" {= "v0.18~preview.130.36+326"}
+  "ppx_expect" {= "v0.18~preview.130.36+326"}
+  "ppx_fields_conv" {= "v0.18~preview.130.36+326"}
+  "ppx_fixed_literal" {= "v0.18~preview.130.36+326"}
+  "ppx_globalize" {= "v0.18~preview.130.36+326"}
+  "ppx_hash" {= "v0.18~preview.130.36+326"}
+  "ppx_helpers" {= "v0.18~preview.130.36+326"}
+  "ppx_here" {= "v0.18~preview.130.36+326"}
+  "ppx_ignore_instrumentation" {= "v0.18~preview.130.36+326"}
+  "ppx_inline_test" {= "v0.18~preview.130.36+326"}
+  "ppx_jane" {= "v0.18~preview.130.36+326"}
+  "ppx_js_style" {= "v0.18~preview.130.36+326"}
+  "ppx_let" {= "v0.18~preview.130.36+326"}
+  "ppx_log" {= "v0.18~preview.130.36+326"}
+  "ppx_module_timer" {= "v0.18~preview.130.36+326"}
+  "ppx_optcomp" {= "v0.18~preview.130.36+326"}
+  "ppx_optional" {= "v0.18~preview.130.36+326"}
+  "ppx_pipebang" {= "v0.18~preview.130.36+326"}
+  "ppx_sexp_conv" {= "v0.18~preview.130.36+326"}
+  "ppx_sexp_message" {= "v0.18~preview.130.36+326"}
+  "ppx_sexp_value" {= "v0.18~preview.130.36+326"}
+  "ppx_shorthand" {= "v0.18~preview.130.36+326"}
+  "ppx_stable" {= "v0.18~preview.130.36+326"}
+  "ppx_stable_witness" {= "v0.18~preview.130.36+326"}
+  "ppx_string" {= "v0.18~preview.130.36+326"}
+  "ppx_string_conv" {= "v0.18~preview.130.36+326"}
+  "ppx_template" {= "v0.18~preview.130.36+326"}
+  "ppx_tydi" {= "v0.18~preview.130.36+326"}
+  "ppx_typed_fields" {= "v0.18~preview.130.36+326"}
+  "ppx_typerep_conv" {= "v0.18~preview.130.36+326"}
+  "ppx_var_name" {= "v0.18~preview.130.36+326"}
+  "ppx_variants_conv" {= "v0.18~preview.130.36+326"}
+  "ppx_yojson_conv" {= "v0.18~preview.130.36+326"}
+  "ppx_yojson_conv_lib" {= "v0.18~preview.130.36+326"}
+  "ppxlib" {= "0.33.0+ox"}
+  "ppxlib_ast" {= "0.33.0+ox"}
+  "ppxlib_jane" {= "v0.18~preview.130.36+326"}
+  "protocol_version_header" {= "v0.18~preview.130.36+326"}
+  "re" {= "1.13.2"}
+  "re2" {= "v0.18~preview.130.36+326"}
+  "record_builder" {= "v0.18~preview.130.36+326"}
+  "regex_parser_intf" {= "v0.18~preview.130.36+326"}
+  "result" {= "1.5"}
+  "seq" {= "base"}
+  "sexp_pretty" {= "v0.18~preview.130.36+326"}
+  "sexplib" {= "v0.18~preview.130.36+326"}
+  "sexplib0" {= "v0.18~preview.130.36+326"}
+  "spawn" {= "v0.17.0"}
+  "splittable_random" {= "v0.18~preview.130.36+326"}
+  "stdio" {= "v0.18~preview.130.36+326"}
+  "stdlib-shims" {= "0.3.0"}
+  "stdune" {= "3.20.1"}
+  "string_dict" {= "v0.18~preview.130.36+326"}
+  "textutils" {= "v0.18~preview.130.36+326"}
+  "time_now" {= "v0.18~preview.130.36+326"}
+  "topkg" {= "1.0.8+ox"}
+  "typerep" {= "v0.18~preview.130.36+326"}
+  "univ_map" {= "v0.18~preview.130.36+326"}
+  "uopt" {= "v0.18~preview.130.36+326"}
+  "uutf" {= "1.0.3+ox"}
+  "variantslib" {= "v0.18~preview.130.36+326"}
+  "xdg" {= "3.20.1"}
+  "yojson" {= "2.2.2"}
+]
+build: [
+  ["dune" "subst"] {dev}
+  ["dune" "build" "-p" name "-j" jobs "@install" "@doc" {with-doc}]
+]
+patches: "odoc-parser.patch"
+dev-repo: "git+https://github.com/ocaml/ocaml-lsp.git"
+extra-files: [
+  "odoc-parser.patch"
+  "sha256=e27b2c24d6f548746f171dd5b0489190ed4e0b76d58bfd509d48a819bab0c066"
+]
+x-commit-hash: "45f5ddac12bb580b4ecaec2d93ee7fac2c903aff"

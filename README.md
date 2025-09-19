@@ -4,15 +4,15 @@ To make a dev-environment, press the green "Code" button, then select "+" next t
 
 Once initialized you need to run the following commands:
 ```shell
-eval $(opam env --switch 5.2.0+ox) && 
-        opam install -j 1  --yes ocamlformat && 
-        opam install -j 1 --yes merlin && 
-        opam install -j 1  --yes async && 
-        opam install -j 1  --yes ocaml-lsp-server && 
-        opam install --yes utop && 
-        opam install --yes parallel && 
-        opam install --yes core_unix && 
-        opam install --yes \
+$ eval $(opam env --switch 5.2.0+ox) && 
+        opam install -j 1  --yes --locked ocamlformat && 
+        opam install -j 1 --yes --locked merlin && 
+        opam install -j 1  --yes --locked async && 
+        opam install -j 1  --yes --locked ocaml-lsp-server && 
+        opam install --yes --locked utop && 
+        opam install --yes --locked parallel && 
+        opam install --yes --locked core_unix && 
+        opam install --yes --locked \
                 async async_extra async_js async_kernel async_rpc_kernel async_rpc_websocket \
                 base core core_kernel ocaml-embed-file \
                 ppx_jane virtual_dom cohttp cohttp-async uri \

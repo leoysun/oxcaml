@@ -1,0 +1,42 @@
+opam-version: "2.0"
+name: "uri"
+version: "4.4.0"
+synopsis: "An RFC3986 URI/URL parsing library"
+description: """\
+This is an OCaml implementation of the [RFC3986](http://tools.ietf.org/html/rfc3986) specification
+for parsing URI or URLs."""
+maintainer: "anil@recoil.org"
+authors: ["Anil Madhavapeddy" "David Sheets" "Rudi Grinberg"]
+license: "ISC"
+tags: ["url" "uri" "org:mirage" "org:xapi-project"]
+homepage: "https://github.com/mirage/ocaml-uri"
+doc: "https://mirage.github.io/ocaml-uri/"
+bug-reports: "https://github.com/mirage/ocaml-uri/issues"
+depends: [
+  "angstrom" {= "0.16.1"}
+  "base-bigarray" {= "base"}
+  "base-domains" {= "base"}
+  "base-nnp" {= "base"}
+  "base-threads" {= "base"}
+  "base-unix" {= "base"}
+  "bigstringaf" {= "0.10.0"}
+  "conf-autoconf" {= "0.2"}
+  "conf-which" {= "1"}
+  "csexp" {= "1.5.2"}
+  "dune" {= "3.20.1"}
+  "dune-configurator" {= "3.20.1"}
+  "ocaml" {= "5.2.0"}
+  "ocaml-config" {= "3"}
+  "ocaml-options-vanilla" {= "1"}
+  "ocaml-syntax-shims" {= "1.0.0"}
+  "ocaml-variants" {= "5.2.0+ox"}
+  "stringext" {= "1.6.0"}
+]
+build: [
+  ["dune" "subst"] {dev}
+  ["dune" "build" "-p" name "-j" jobs]
+  ["dune" "runtest" "-p" name "-j" jobs] {with-test & os != "macos"}
+]
+dev-repo: "git+https://github.com/mirage/ocaml-uri.git"
+x-commit-hash: "c336c796f4deb8979a4c7ceea3bef34b46240623"
+x-maintenance-intent: ["(latest)"]
