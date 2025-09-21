@@ -60,15 +60,15 @@ RUN df -h
 
 USER ${USERNAME}
 
-# CR mshinwell/avsm: use a hash for --repos, but will need to restore the
-# URL afterwards for any user opam update commands.
-RUN opam init -a --disable-sandboxing --yes --bare && \
-        opam update -a && \
-        opam switch create 5.2.0+ox --yes \
-        --repos "ox=git+https://github.com/oxcaml/opam-repository.git,default" && \
-        eval $(opam env --switch 5.2.0+ox) 
+# # CR mshinwell/avsm: use a hash for --repos, but will need to restore the
+# # URL afterwards for any user opam update commands.
+# RUN opam init -a --disable-sandboxing --yes --bare && \
+#         opam update -a && \
+#         opam switch create 5.2.0+ox --yes \
+#         --repos "ox=git+https://github.com/oxcaml/opam-repository.git,default" && \
+#         eval $(opam env --switch 5.2.0+ox) 
 
-RUN df -h
+# RUN df -h
 
 # RUN eval $(opam env --switch 5.2.0+ox) && \
 #         opam install -j 1  --yes ocamlformat && \
