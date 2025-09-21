@@ -10,7 +10,6 @@ eval $(opam env --switch 5.2.0) &&
         opam install -j 1  --yes --locked async && 
         opam install -j 1  --yes --locked ocaml-lsp-server && 
         opam install --yes --locked utop && 
-        opam install --yes --locked parallel && 
         opam install --yes --locked core_unix && 
         opam install --yes --locked \
                 async async_extra async_js async_kernel async_rpc_kernel async_rpc_websocket \
