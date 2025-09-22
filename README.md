@@ -1,4 +1,4 @@
-# TicTacToe using OxCaml
+# TicTacToe using OCaml
 
 To make a dev-environment, press the green "Code" button, then select "+" next to "Codespaces".  A new Codespace will open.  It currently takes 20-40 minutes to initialize; please be patient.
 
@@ -15,9 +15,9 @@ opam init -a --disable-sandboxing --yes --bare && \
                 bonsai js_of_ocaml js_of_ocaml-ppx
 ```
 
-Afterwards you should have a full OPAM environment with the OxCaml compiler and dune on the path.  VSCode will have the OCaml Platform plugin together with the LSP server and merlin, the editor assistant.
+Afterwards you should have a full OPAM environment with the OCaml compiler and dune on the path.  VSCode will have the OCaml Platform plugin together with the LSP server and merlin, the editor assistant.
 
-## Building the OxCaml project
+## Building the OCaml project
 To format the files:
 ```shell
 dune fmt
