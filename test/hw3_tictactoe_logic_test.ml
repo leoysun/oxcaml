@@ -342,65 +342,65 @@ let%expect_test "TicTacToe random walk till terminal state" =
   random_walk initial_3x3 ~random_seed:1;
   [%expect
     {|
-    X|X|O
-    -----
     O|O|X
     -----
+     |X|
+    -----
     X|O|X
-    Stalemate
+    (Winner X)
     |}];
   random_walk initial_3x3 ~random_seed:3;
   [%expect
     {|
-    O|X|X
+    X|X|O
     -----
-    O|X|O
+    O|O|X
     -----
-    O| |X
-    (Winner O)
+    X|X|O
+    Stalemate
     |}];
   random_walk initial_3x3 ~random_seed:1234;
   [%expect
     {|
-    O|O|
+    X| |O
     -----
-    X|O|
+    X| |O
     -----
-    X|X|X
+    X|O|X
     (Winner X)
     |}];
   random_walk initial_gomoku ~random_seed:1;
   [%expect
     {|
-     | |O|O| | |O| | | | | |O|X|
+     | |O| |X|X|X| | | |O| | |X|
     -----------------------------
-    O|X|X| |X|O| | | | | | | | |
+    O|O| | | |O| | |X|X|X|O|X| |X
     -----------------------------
-     |X|X| | |O|O|O|O|X| | |O|O|O
+    X| | | |O|X| |X| | | | | | |X
     -----------------------------
-    X| | |X| | |O|O| |O| |X| | |
+     | | |O| |X|O| | | |X| | | |X
     -----------------------------
-     | |X|O| | | | | | | |X| | |
+     | | |O| | | |O|O| | |O| | |X
     -----------------------------
-     | | |X|O| | | | | | | | | |X
+    O|X|X|X|X|X| | |O| | |X| | |
     -----------------------------
-    O| | | | |O| |X| | | | | | |
+     |O| | | | | |O| |O|O|O|O| |X
     -----------------------------
-    X| | |X| |O| | | | | |X|O| |
+    X| | |O| |O|O| |X| | | | |O|O
     -----------------------------
-     | |X| |X| | | | |O| | | | |O
+     | | |O| |X|O|O| |O|X| | | |
     -----------------------------
-     | | | | |X|O| |O|X| | |O|X|
+    O| |X| |O|O| | | | | | | | |
     -----------------------------
-    X| |X|X|X|X|X| |O| |O| |O| |
+     |X| |O| | | |X|O| |X| | |X|
     -----------------------------
-    X|O| | | | | | | | | |O| | |
+     | | | |X|X| | |O| |X|O| |X|
     -----------------------------
-     | | |O| |O|X|X|X| |O| | |X|
+     |O| | | | | | |O|X|X|X| | |
     -----------------------------
-    X| | | |O|X| | | |X|O| | | |O
+    O| |X| |X|X| | |X| | |O| | |O
     -----------------------------
-     | |O| | |X|O|X|X| | | | | |X
+     |O|O|X| | |X| | | | | | | |O
     (Winner X)
     |}]
 ;;
