@@ -4,18 +4,17 @@ To make a dev-environment, press the green "Code" button, then select "+" next t
 
 Once initialized you need to run the following commands:
 ```shell
-eval $(opam env --switch 5.2.0) && 
-        opam install -j 1  --yes --locked ocamlformat && 
-        opam install -j 1 --yes --locked merlin && 
-        opam install -j 1  --yes --locked async && 
-        opam install -j 1  --yes --locked ocaml-lsp-server && 
-        opam install --yes --locked utop && 
-        opam install --yes --locked core_unix && 
-        opam install --yes --locked \
+
+opam init -a --disable-sandboxing --yes --bare && 
+        opam update -a && 
+        opam switch create 5.4.0 --yes  && 
+        eval $(opam env --switch 5.4.0) && 
+        opam install --yes  ocamlformat merlin async ocaml-lsp-server utop core_unix \
                 async async_extra async_js async_kernel async_rpc_kernel async_rpc_websocket \
                 base core core_kernel ocaml-embed-file \
                 ppx_jane virtual_dom cohttp cohttp-async uri \
                 bonsai js_of_ocaml js_of_ocaml-ppx
+
 ```
 
 Afterwards you should have a full OPAM environment with the OxCaml compiler and dune on the path.  VSCode will have the OCaml Platform plugin together with the LSP server and merlin, the editor assistant.

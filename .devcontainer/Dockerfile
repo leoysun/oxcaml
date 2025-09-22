@@ -60,13 +60,4 @@ RUN df -h
 
 USER ${USERNAME}
 
-# CR mshinwell/avsm: use a hash for --repos, but will need to restore the
-# URL afterwards for any user opam update commands.
-RUN opam init -a --disable-sandboxing --yes --bare && \
-        opam update -a && \
-        opam switch create 5.2.0 --yes  && \
-        eval $(opam env --switch 5.2.0) 
-
-RUN df -h
-
 USER root
