@@ -6,8 +6,8 @@ Once initialized you need to run the following commands:
 ```shell
 opam init -a --disable-sandboxing --yes --bare && \
         opam update -a && \
-        opam switch create 5.3.0 --yes  && \
-        eval $(opam env --switch 5.3.0) && \
+        opam switch create 4.14.0 --yes  && \
+        eval $(opam env --switch 4.14.0) && \
         opam install --yes  ocamlformat merlin async ocaml-lsp-server utop core_unix \
                 async async_extra async_js async_kernel async_rpc_kernel async_rpc_websocket \
                 base core core_kernel ocaml-embed-file \
