@@ -3,12 +3,11 @@ FROM mcr.microsoft.com/devcontainers/universal
 
 RUN df -h
 
-RUN rm -rf /usr/share/dotnet /usr/local/lib/android /usr/local/php /usr/local/py-utils \
-        /usr/local/python /usr/local/rvm /usr/local/sdkman /usr/local/share/nvm \
-        /opt/ghc /opt/hostedtoolcache/CodeQL /opt/conda /opt/dotnet \
-        /home/codespace/.local/lib/python3.12
-
-RUN df -h
+# RUN rm -rf /usr/share/dotnet /usr/local/lib/android /usr/local/php /usr/local/py-utils \
+#         /usr/local/python /usr/local/rvm /usr/local/sdkman /usr/local/share/nvm \
+#         /opt/ghc /opt/hostedtoolcache/CodeQL /opt/conda /opt/dotnet \
+#         /home/codespace/.local/lib/python3.12
+# RUN df -h
 
 
 RUN du -sh /usr/*
@@ -58,6 +57,14 @@ RUN curl -L -o /usr/bin/opam https://github.com/ocaml/opam/releases/download/2.3
 
 RUN df -h
 
-USER ${USERNAME}
+RUN opam init -a --disable-sandboxing --yes --bare && \
+        opam update -a && \
+        opam switch create 4.14.0 --yes  && \
+        eval $(opam env --switch 4.14.0) && \
+        opam install --yes  ocamlformat merlin async ocaml-lsp-server utop core_unix \
+                async async_extra async_js async_kernel async_rpc_kernel async_rpc_websocket \
+                base core core_kernel ocaml-embed-file \
+                ppx_jane virtual_dom cohttp cohttp-async uri \
+                bonsai js_of_ocaml js_of_ocaml-ppx
 
 USER root
