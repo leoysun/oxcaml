@@ -1,13 +1,13 @@
 FROM mcr.microsoft.com/devcontainers/universal
 
-RUN df -h
+# RUN df -h
 
-RUN rm -rf /usr/share/dotnet /usr/local/lib/android /usr/local/php /usr/local/py-utils \
-        /usr/local/python /usr/local/rvm /usr/local/sdkman /usr/local/share/nvm \
-        /opt/ghc /opt/hostedtoolcache/CodeQL /opt/conda /opt/dotnet \
-        /home/codespace/.local/lib/python3.12
+# RUN rm -rf /usr/share/dotnet /usr/local/lib/android /usr/local/php /usr/local/py-utils \
+#         /usr/local/python /usr/local/rvm /usr/local/sdkman /usr/local/share/nvm \
+#         /opt/ghc /opt/hostedtoolcache/CodeQL /opt/conda /opt/dotnet \
+#         /home/codespace/.local/lib/python3.12
 
-RUN df -h
+# RUN df -h
 
 USER root
 
@@ -37,10 +37,11 @@ RUN curl -L -o /usr/bin/opam https://github.com/ocaml/opam/releases/download/2.3
 
 USER ${USERNAME}
 
-RUN opam init -a --disable-sandboxing --yes --bare && \
-        opam update -a && \
-        opam switch create 4.14.0 --yes  && \
-        eval $(opam env --switch 4.14.0) && \
-        opam install --yes  ocamlformat merlin ocaml-lsp-server bonsai
+# We run out of disk space, so we create the switch after the VM is ready.
+# RUN opam init -a --disable-sandboxing --yes --bare && \
+#         opam update -a && \
+#         opam switch create 4.14.0 --yes  && \
+#         eval $(opam env --switch 4.14.0) && \
+#         opam install --yes  ocamlformat merlin ocaml-lsp-server bonsai
 
 USER root
