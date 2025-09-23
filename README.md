@@ -5,19 +5,24 @@ To make a dev-environment, press the green "Code" button, then select "+" next t
 Afterwards you should have a full OPAM environment with the OCaml compiler and dune on the path.  VSCode will have the OCaml Platform plugin together with the LSP server and merlin, the editor assistant.
 
 ## Building the OCaml project
+Make sure you're using the right opam switch:
+```shell
+eval $(opam env --switch 4.14.0)
+```
+
 To format the files:
 ```shell
-eval $(opam env --switch 4.14.0) && dune fmt
+dune fmt
 ```
 
 To build and run tests continously:
 ```shell
-eval $(opam env --switch 4.14.0) && dune build @runtest --watch
+dune build @runtest --watch
 ```
 
 To promote/update expect-tests:
 ```shell
-eval $(opam env --switch 4.14.0) && dune promote
+dune promote
 ```
 
 To update the javascript:
