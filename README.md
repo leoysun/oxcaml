@@ -7,17 +7,17 @@ Afterwards you should have a full OPAM environment with the OCaml compiler and d
 ## Building the OCaml project
 To format the files:
 ```shell
-dune fmt
+eval $(opam env --switch 4.14.0) && dune fmt
 ```
 
 To build and run tests continously:
 ```shell
-dune build @runtest --watch
+eval $(opam env --switch 4.14.0) && dune build @runtest --watch
 ```
 
 To promote/update expect-tests:
 ```shell
-dune promote
+eval $(opam env --switch 4.14.0) && dune promote
 ```
 
 To update the javascript:
