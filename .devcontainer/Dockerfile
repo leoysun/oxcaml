@@ -12,6 +12,10 @@ RUN cd /root && \
         cd .. && \
         rm -rf autoconf-2.71 autoconf.tar.gz
 
+ARG USERNAME=codespace
+ARG USER_UID=1000
+ARG USER_GID=$USER_UID
+
 RUN curl -L -o /usr/bin/opam https://github.com/ocaml/opam/releases/download/2.3.0/opam-2.3.0-i686-linux && \
         chmod +x /usr/bin/opam && \
         apt-get update && \
@@ -21,6 +25,8 @@ RUN curl -L -o /usr/bin/opam https://github.com/ocaml/opam/releases/download/2.3
         libsecret-1-dev && \
         apt-get clean && \
         rm -rf /var/lib/apt/lists/*
+
+USER ${USERNAME}
 
 RUN opam init -a --disable-sandboxing --yes --bare && \
         opam update -a && \
@@ -32,3 +38,4 @@ RUN opam init -a --disable-sandboxing --yes --bare && \
                 ppx_jane virtual_dom cohttp cohttp-async uri \
                 bonsai js_of_ocaml js_of_ocaml-ppx
 
+USER root
