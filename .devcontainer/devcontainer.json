@@ -10,5 +10,7 @@
                                 "Shuumatsu.vscode-ocamlformat"
                         ]
                 }
-        }
+        }, 
+        "postCreateCommand": "opam update && opam install -y dune ppx_expect alcotest qcheck-core && echo 'eval $(opam env)' >> ~/.bashrc"
+
 }
