@@ -38,7 +38,11 @@ To update the javascript:
 ```shell
 cp _build/default/ui/tictactoe_ui.bc.js generated_js/
 ```
-Then commit the changes and surf to your github.io to see you site:
+Then you can either test it locally in VSCode by starting a local http server:
+```shell
+python3 -m http.server 8000
+```
+or to commit the changes and surf to your github.io to see you site:
 https://yoav-zibin.github.io/oxcaml/
 
 
