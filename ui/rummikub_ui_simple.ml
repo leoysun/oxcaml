@@ -138,8 +138,10 @@ let render_staging_meld ~meld ~meld_index ~is_drop_target ~inject =
          border-radius: 8px; padding: 0.625rem; margin: 5px; min-width: 100px; \
          transition: all 0.2s ease;"
       else meld_style);
+      Vdom.Attr.create "ondragover" "event.preventDefault(); return false;";
       Vdom.Attr.on_dragover (fun _evt -> inject (Action.DragOver (Some meld_index)));
       Vdom.Attr.on_dragleave (fun _evt -> inject (Action.DragOver None));
+      Vdom.Attr.create "ondrop" "event.preventDefault(); return false;";
       Vdom.Attr.on_drop (fun _evt -> inject (Action.DropOnMeld meld_index));
     ]
     [
@@ -296,8 +298,10 @@ let render_staging_area ~staging_melds ~drag_over_meld ~inject =
            min-height: 60px; text-align: center; color: #6c757d; \
            transition: all 0.2s ease;"
         );
+        Vdom.Attr.create "ondragover" "event.preventDefault(); return false;";
         Vdom.Attr.on_dragover (fun _evt -> inject (Action.DragOver (Some (List.length staging_melds))));
         Vdom.Attr.on_dragleave (fun _evt -> inject (Action.DragOver None));
+        Vdom.Attr.create "ondrop" "event.preventDefault(); return false;";
         Vdom.Attr.on_drop (fun _evt -> inject Action.DropOnNewMeld);
       ]
       [Vdom.Node.text "+ Drop here for new meld"]
