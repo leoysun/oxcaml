@@ -1,0 +1,4 @@
+(executable
+ (name rummikub_cli)
+ (libraries rummikub core)
+ (preprocess (pps ppx_jane)))
