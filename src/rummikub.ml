@@ -237,36 +237,82 @@ module Rules = struct
         else
           Error "Meld must be either a Group (same rank, different colors) or a Run (same color, consecutive ranks)"
 
-  let apply_play st melds =
+  (* New version that supports table manipulation *)
+  let apply_play_with_table_manipulation st new_board tiles_from_hand =
     let p = st.players.(st.turn) in
-    (* Validate each meld *)
+    
+    (* Validate all melds in the new board *)
     let validation_errors = List.filter_map (fun m ->
       match validate_meld m with
       | Ok () -> None
       | Error msg -> Some msg
-    ) melds in
+    ) new_board in
     if validation_errors <> [] then
       Error (String.concat "\n" validation_errors)
     else
-    let passes_initial =
-      if p.met_initial_30 then true else initial_30_ok melds
+    
+    (* Get all tiles from old board and new board *)
+    let old_board_tiles = List.concat st.board in
+    let new_board_tiles = List.concat new_board in
+    
+    (* Calculate tiles added to board (tiles in new board but not in old board) *)
+    let tiles_added = 
+      let rec remove_tiles_from_list tiles_to_remove from_list =
+        match tiles_to_remove with
+        | [] -> from_list
+        | t :: rest ->
+            let from_list' = 
+              let rec remove_one tile = function
+                | [] -> []
+                | x :: xs -> if Tile.compare_tile x tile = 0 then xs else x :: remove_one tile xs
+              in remove_one t from_list
+            in
+            remove_tiles_from_list rest from_list'
+      in
+      remove_tiles_from_list old_board_tiles new_board_tiles
     in
-    if not passes_initial then Error "Initial meld total < 30" else
-    (* remove from hand *)
-    let new_hand_opt =
+    
+    (* Verify tiles added match tiles from hand *)
+    let tiles_added_sorted = List.sort Tile.compare_tile tiles_added in
+    let tiles_from_hand_sorted = List.sort Tile.compare_tile tiles_from_hand in
+    if tiles_added_sorted <> tiles_from_hand_sorted then
+      Error "Tiles on board don't match: you must only add tiles from your hand"
+    else
+    
+    (* Check initial 30 rule for first play *)
+    let passes_initial =
+      if p.met_initial_30 then true 
+      else if List.is_empty tiles_from_hand then false  (* Must play something on first turn *)
+      else
+        (* Calculate points from newly played tiles *)
+        let new_melds = List.filter (fun meld ->
+          List.exists (fun tile ->
+            List.exists (fun hand_tile -> Tile.compare_tile tile hand_tile = 0) tiles_from_hand
+          ) meld
+        ) new_board in
+        initial_30_ok new_melds
+    in
+    if not passes_initial then Error "Initial meld total < 30 points" else
+    
+    (* Remove tiles from hand *)
+    let new_hand_opt = 
       List.fold_left
-        (fun acc m -> Option.bind acc (fun h -> remove_meld_from_hand h m))
-        (Some p.hand) melds
+        (fun acc tile -> Option.bind acc (fun h -> TileMultiset.remove_one tile h))
+        (Some p.hand) tiles_from_hand
     in
     match new_hand_opt with
-    | None -> Error "Tried to play tiles you don't have"
+    | None -> Error "Tried to play tiles you don't have in your hand"
     | Some h' ->
-      let p' = { p with hand = h'; met_initial_30 = p.met_initial_30 || initial_30_ok melds } in
+      let p' = { p with hand = h'; met_initial_30 = p.met_initial_30 || passes_initial } in
       let players' = Array.copy st.players in
       players'.(st.turn) <- p';
-      let b' = st.board @ melds in
-      if not (board_valid b') then Error "Board invalid after play"
-      else Ok { st with board = b'; players = players' }
+      Ok { st with board = new_board; players = players' }
+  
+  (* Legacy version - just add melds to board (for backward compatibility) *)
+  let apply_play st melds =
+    let tiles_in_melds = List.concat melds in
+    let new_board = st.board @ melds in
+    apply_play_with_table_manipulation st new_board tiles_in_melds
 
   let apply_draw st =
     match st.deck with

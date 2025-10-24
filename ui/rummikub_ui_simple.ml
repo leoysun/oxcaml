@@ -7,13 +7,22 @@ open Rummikub
 type game_mode = VsComputer | PassAndPlay | ThreePlayer | FourPlayer [@@deriving sexp_of]
 
 module Model = struct
+  type drag_source = 
+    | FromHand of int  (* tile index in hand *)
+    | FromStagingMeld of int * int  (* (meld_index, tile_index) in staging area *)
+  [@@deriving sexp_of]
+
   type t = {
     game_state : State.t option;
-    selected_tiles : int list;
+    selected_tiles : int list;  (* Indices of selected tiles from current player's hand *)
     message : string;
     game_mode : game_mode option;
     num_players : int;
     last_drawn_tile_index : int option;  (* Index of the most recently drawn tile *)
+    rearrange_mode : bool;  (* Whether table manipulation mode is active *)
+    staging_melds : Tile.tile list list;  (* Work-in-progress melds during rearrangement *)
+    dragging_tile : drag_source option;  (* Currently dragged tile *)
+    drag_over_meld : int option;  (* Meld index being hovered over *)
   }
   
   let equal _t1 _t2 = false
@@ -30,6 +39,17 @@ module Action = struct
     | PassTurn
     | NewGame
     | BotMove
+    | ToggleRearrangeMode
+    | AddToNewMeld  (* Add selected tiles to a new meld in staging *)
+    | StartDragFromHand of int  (* tile index in hand *)
+    | StartDragFromStaging of int * int  (* (meld_index, tile_index) *)
+    | DragOver of int option  (* meld_index option *)
+    | DropOnMeld of int  (* meld_index to drop onto *)
+    | DropOnNewMeld  (* create a new meld *)
+    | EndDrag  (* cancelled drag *)
+    | RemoveTileFromStaging of int * int  (* remove tile from staging meld *)
+    | SubmitRearrangement
+    | CancelRearrangement
   [@@deriving sexp_of]
 end
 
@@ -73,31 +93,98 @@ let render_tile ~tile ~selected ~newly_drawn ~inject ~action =
     ~attrs:[style_string style; Vdom.Attr.on_click (fun _ -> inject action)]
     [Vdom.Node.text tile_text]
 
-let render_meld meld =
-  let meld_tiles = List.map meld ~f:(fun tile ->
+let render_staging_meld ~meld ~meld_index ~is_drop_target ~inject =
+  let meld_tiles = List.mapi meld ~f:(fun tile_idx tile ->
     let tile_text = tile_to_string tile in
     let color = tile_color tile in
     let style = Printf.sprintf
       "background: white; border: 2px solid %s; color: %s; border-radius: 8px; \
        padding: 0.5rem 0.625rem; font-weight: bold; font-size: 0.9rem; \
-       min-width: 40px; text-align: center; margin: 0 2px;"
+       min-width: 40px; text-align: center; margin: 0 2px; cursor: move; \
+       transition: all 0.2s ease; box-shadow: 0 2px 4px rgba(0,0,0,0.1);"
       color color
     in
-    Vdom.Node.span ~attrs:[style_string style] [Vdom.Node.text tile_text]
+    Vdom.Node.div
+      ~attrs:[
+        style_string style;
+        Vdom.Attr.create "draggable" "true";
+        Vdom.Attr.on_dragstart (fun _evt -> inject (Action.StartDragFromStaging (meld_index, tile_idx)));
+        Vdom.Attr.on_dragend (fun _evt -> inject Action.EndDrag);
+      ]
+      [Vdom.Node.text tile_text]
   ) in
-  let meld_style = "display: inline-block; background: white; border: 2px solid #333; \
-                    border-radius: 8px; padding: 0.625rem; margin: 5px;"
+  
+  let meld_validation = 
+    if Meld.is_meld meld then
+      Vdom.Node.span 
+        ~attrs:[style_string "color: #28a745; font-weight: bold;"] 
+        [Vdom.Node.text " ✓"]
+    else
+      Vdom.Node.span 
+        ~attrs:[style_string "color: #dc3545; font-weight: bold;"] 
+        [Vdom.Node.text " ✗"]
   in
+  
+  let meld_style =
+    "display: inline-block; background: white; border: 3px solid #333; \
+     border-radius: 8px; padding: 0.625rem; margin: 5px; min-width: 100px; \
+     transition: all 0.2s ease;"
+  in
+  
   Vdom.Node.div
-    ~attrs:[style_string meld_style]
+    ~attrs:[
+      style_string (if is_drop_target then 
+        "display: inline-block; background: #e8f5e9; border: 3px dashed #28a745; \
+         border-radius: 8px; padding: 0.625rem; margin: 5px; min-width: 100px; \
+         transition: all 0.2s ease;"
+      else meld_style);
+      Vdom.Attr.on_dragover (fun _evt -> inject (Action.DragOver (Some meld_index)));
+      Vdom.Attr.on_dragleave (fun _evt -> inject (Action.DragOver None));
+      Vdom.Attr.on_drop (fun _evt -> inject (Action.DropOnMeld meld_index));
+    ]
     [
       Vdom.Node.div
         ~attrs:[style_string "font-size: 0.8rem; color: #666; margin-bottom: 5px; text-align: center;"]
-        [Vdom.Node.text (Printf.sprintf "Meld (%d pts)" (Meld.meld_points meld))];
+        [Vdom.Node.text (Printf.sprintf "Meld (%d pts)" (Meld.meld_points meld)); meld_validation];
       Vdom.Node.div
-        ~attrs:[style_string "display: flex; gap: 3px;"]
+        ~attrs:[style_string "display: flex; gap: 3px; flex-wrap: wrap;"]
         meld_tiles
     ]
+
+let render_draggable_hand ~hand ~selected_tiles ~inject =
+  let tiles = State.TileMultiset.to_list hand in
+  if List.is_empty tiles then
+    Vdom.Node.div
+      ~attrs:[style_string "display: flex; justify-content: center; align-items: center; \
+                            min-height: 50px; color: #28a745; font-weight: bold; \
+                            font-size: 1.2rem; margin-top: 0.625rem;"]
+      [Vdom.Node.text "🎉 EMPTY HAND! 🎉"]
+  else
+    Vdom.Node.div
+      ~attrs:[style_string "display: flex; flex-wrap: wrap; gap: 5px; margin-top: 0.625rem;"]
+      (List.mapi tiles ~f:(fun i tile ->
+        let tile_text = tile_to_string tile in
+        let color = tile_color tile in
+        let selected = List.mem selected_tiles i ~equal:Int.equal in
+        let transform = if selected then "scale(1.1)" else "scale(1)" in
+        let box_shadow = if selected then "0 4px 8px rgba(0,0,0,0.2)" else "0 2px 4px rgba(0,0,0,0.1)" in
+        let style = Printf.sprintf
+          "background: white; border: 2px solid %s; color: %s; border-radius: 8px; \
+           padding: 0.5rem 0.625rem; font-weight: bold; font-size: 0.9rem; \
+           min-width: 40px; text-align: center; cursor: move; \
+           transition: all 0.2s ease; box-shadow: %s; transform: %s;"
+          color color box_shadow transform
+        in
+        Vdom.Node.div
+          ~attrs:[
+            style_string style;
+            Vdom.Attr.create "draggable" "true";
+            Vdom.Attr.on_dragstart (fun _evt -> inject (Action.StartDragFromHand i));
+            Vdom.Attr.on_dragend (fun _evt -> inject Action.EndDrag);
+            Vdom.Attr.on_click (fun _ -> inject (Action.ToggleTile i));
+          ]
+          [Vdom.Node.text tile_text]
+      ))
 
 let render_hand ~hand ~selected_tiles ~last_drawn_tile_index ~inject ~is_current ~hide_tiles =
   let tiles = State.TileMultiset.to_list hand in
@@ -129,7 +216,7 @@ let render_hand ~hand ~selected_tiles ~last_drawn_tile_index ~inject ~is_current
         render_tile ~tile ~selected ~newly_drawn ~inject ~action:(Action.ToggleTile i)
       ))
 
-let render_player ~player ~is_current ~is_winner ~selected_tiles ~last_drawn_tile_index ~inject ~hide_tiles =
+let render_player ~player ~is_current ~is_winner ~selected_tiles ~last_drawn_tile_index ~inject ~hide_tiles ~rearrange_mode =
   let bg_color = 
     if is_winner then "#d4edda"
     else if is_current then "#e3f2fd"
@@ -168,16 +255,65 @@ let render_player ~player ~is_current ~is_winner ~selected_tiles ~last_drawn_til
         ~attrs:[]
         [Vdom.Node.text (Printf.sprintf "Hand: %d tiles" 
           (List.length (State.TileMultiset.to_list player.State.hand)))];
-      render_hand ~hand:player.State.hand ~selected_tiles ~last_drawn_tile_index ~inject ~is_current ~hide_tiles;
+      (if rearrange_mode && is_current then
+        render_draggable_hand ~hand:player.State.hand ~selected_tiles ~inject
+      else
+        render_hand ~hand:player.State.hand ~selected_tiles ~last_drawn_tile_index ~inject ~is_current ~hide_tiles);
     ]
 
-let render_board board =
+let render_staging_area ~staging_melds ~drag_over_meld ~inject =
+  let staging_display = 
+    if List.is_empty staging_melds then
+      [Vdom.Node.div
+        ~attrs:[style_string "text-align: center; color: #6c757d; font-style: italic; padding: 1rem;"]
+        [Vdom.Node.text "Drag tiles from your hand or between melds to rearrange"]]
+    else
+      List.mapi staging_melds ~f:(fun idx meld ->
+        let is_drop_target = match drag_over_meld with
+          | Some target_idx -> target_idx = idx
+          | None -> false
+        in
+        render_staging_meld ~meld ~meld_index:idx ~is_drop_target ~inject
+      )
+  in
+  
+  (* Add a "new meld" drop zone *)
+  let new_meld_is_target = match drag_over_meld with
+    | Some idx -> idx = List.length staging_melds
+    | None -> false
+  in
+  let new_meld_zone =
+    Vdom.Node.div
+      ~attrs:[
+        style_string (if new_meld_is_target then
+          "display: inline-block; background: #e8f5e9; border: 2px dashed #28a745; \
+           border-radius: 8px; padding: 0.625rem; margin: 5px; min-width: 100px; \
+           min-height: 60px; text-align: center; color: #6c757d; \
+           transition: all 0.2s ease;"
+        else
+          "display: inline-block; background: #f8f9fa; border: 2px dashed #dee2e6; \
+           border-radius: 8px; padding: 0.625rem; margin: 5px; min-width: 100px; \
+           min-height: 60px; text-align: center; color: #6c757d; \
+           transition: all 0.2s ease;"
+        );
+        Vdom.Attr.on_dragover (fun _evt -> inject (Action.DragOver (Some (List.length staging_melds))));
+        Vdom.Attr.on_dragleave (fun _evt -> inject (Action.DragOver None));
+        Vdom.Attr.on_drop (fun _evt -> inject Action.DropOnNewMeld);
+      ]
+      [Vdom.Node.text "+ Drop here for new meld"]
+  in
+  
+  Vdom.Node.div ~attrs:[] (staging_display @ [new_meld_zone])
+
+let render_board ~board ~rearrange_mode:_ ~selected_board_tiles:_ ~inject =
   if List.is_empty board then
     Vdom.Node.div
       ~attrs:[style_string "text-align: center; color: #6c757d; font-style: italic; padding: 2.5rem;"]
       [Vdom.Node.text "No tiles on the table yet"]
   else
-    Vdom.Node.div ~attrs:[] (List.map board ~f:render_meld)
+    Vdom.Node.div ~attrs:[] (List.mapi board ~f:(fun meld_idx meld ->
+      render_staging_meld ~meld ~meld_index:meld_idx ~is_drop_target:false ~inject
+    ))
 
 (* Simple AI *)
 module SimpleAI = struct
@@ -460,6 +596,238 @@ let apply_action (model : Model.t) (action : Action.t) : Model.t =
           else model
       | _ -> model
       )
+  
+  | ToggleRearrangeMode ->
+      (match model.game_state with
+      | None -> model
+      | Some state ->
+          if Rules.is_game_over state then model
+          else
+            let new_rearrange_mode = not model.rearrange_mode in
+            { model with 
+              rearrange_mode = new_rearrange_mode;
+              selected_tiles = [];
+              staging_melds = if new_rearrange_mode then state.board else [];
+              dragging_tile = None;
+              drag_over_meld = None;
+              message = if new_rearrange_mode then "Rearrange Mode: Drag tiles to rearrange. Drag from hand to add tiles."
+                        else "Rearrange mode cancelled";
+            }
+      )
+  
+  | AddToNewMeld ->
+      (match model.game_state with
+      | None -> model
+      | Some state ->
+          if not model.rearrange_mode || List.is_empty model.selected_tiles then model
+          else
+            let current_player = state.players.(state.turn) in
+            let hand_tiles = State.TileMultiset.to_list current_player.hand in
+            
+            (* Get selected tiles from hand *)
+            let new_meld_tiles = List.filter_map model.selected_tiles ~f:(fun idx ->
+              if idx < List.length hand_tiles then Some (List.nth_exn hand_tiles idx) else None
+            ) in
+            
+            if List.is_empty new_meld_tiles then model
+            else
+              { model with
+                staging_melds = model.staging_melds @ [new_meld_tiles];
+                selected_tiles = [];
+                message = "Meld added to staging area. Continue or Submit.";
+              }
+      )
+  
+  | StartDragFromHand idx ->
+      { model with dragging_tile = Some (Model.FromHand idx) }
+  
+  | StartDragFromStaging (meld_idx, tile_idx) ->
+      { model with dragging_tile = Some (Model.FromStagingMeld (meld_idx, tile_idx)) }
+  
+  | DragOver meld_idx_opt ->
+      { model with drag_over_meld = meld_idx_opt }
+  
+  | EndDrag ->
+      { model with dragging_tile = None; drag_over_meld = None }
+  
+  | DropOnMeld meld_idx ->
+      (match model.dragging_tile, model.game_state with
+      | Some drag_source, Some state ->
+          let current_player = state.players.(state.turn) in
+          let hand_tiles = State.TileMultiset.to_list current_player.hand in
+          
+          (* Get the dragged tile *)
+          let tile_opt = match drag_source with
+            | Model.FromHand idx ->
+                if idx < List.length hand_tiles then Some (List.nth_exn hand_tiles idx) else None
+            | Model.FromStagingMeld (src_meld_idx, src_tile_idx) ->
+                if src_meld_idx < List.length model.staging_melds then
+                  let src_meld = List.nth_exn model.staging_melds src_meld_idx in
+                  if src_tile_idx < List.length src_meld then Some (List.nth_exn src_meld src_tile_idx)
+                  else None
+                else None
+          in
+          
+          (match tile_opt with
+          | None -> { model with dragging_tile = None; drag_over_meld = None }
+          | Some tile ->
+              (* Remove tile from source if from staging *)
+              let new_staging = match drag_source with
+                | Model.FromHand _ -> model.staging_melds (* Don't remove from hand *)
+                | Model.FromStagingMeld (src_meld_idx, src_tile_idx) ->
+                    (* Remove from staging meld *)
+                    let staging = List.mapi model.staging_melds ~f:(fun i meld ->
+                      if i = src_meld_idx then
+                        List.filteri meld ~f:(fun j _ -> j <> src_tile_idx)
+                      else meld
+                    ) in
+                    (* Filter out empty melds *)
+                    List.filter staging ~f:(fun m -> not (List.is_empty m))
+              in
+              
+              (* Add tile to target meld *)
+              let final_staging = 
+                if meld_idx < List.length new_staging then
+                  List.mapi new_staging ~f:(fun i meld ->
+                    if i = meld_idx then meld @ [tile] else meld
+                  )
+                else
+                  new_staging @ [[tile]]
+              in
+              
+              { model with 
+                staging_melds = final_staging;
+                dragging_tile = None;
+                drag_over_meld = None;
+                message = "Tile moved. Continue rearranging or Submit when done.";
+              }
+          )
+      | _ -> { model with dragging_tile = None; drag_over_meld = None }
+      )
+  
+  | DropOnNewMeld ->
+      (match model.dragging_tile, model.game_state with
+      | Some drag_source, Some state ->
+          let current_player = state.players.(state.turn) in
+          let hand_tiles = State.TileMultiset.to_list current_player.hand in
+          
+          (* Get the dragged tile *)
+          let tile_opt = match drag_source with
+            | Model.FromHand idx ->
+                if idx < List.length hand_tiles then Some (List.nth_exn hand_tiles idx) else None
+            | Model.FromStagingMeld (src_meld_idx, src_tile_idx) ->
+                if src_meld_idx < List.length model.staging_melds then
+                  let src_meld = List.nth_exn model.staging_melds src_meld_idx in
+                  if src_tile_idx < List.length src_meld then Some (List.nth_exn src_meld src_tile_idx)
+                  else None
+                else None
+          in
+          
+          (match tile_opt with
+          | None -> { model with dragging_tile = None; drag_over_meld = None }
+          | Some tile ->
+              (* Remove tile from source if from staging *)
+              let new_staging = match drag_source with
+                | Model.FromHand _ -> model.staging_melds
+                | Model.FromStagingMeld (src_meld_idx, src_tile_idx) ->
+                    let staging = List.mapi model.staging_melds ~f:(fun i meld ->
+                      if i = src_meld_idx then
+                        List.filteri meld ~f:(fun j _ -> j <> src_tile_idx)
+                      else meld
+                    ) in
+                    List.filter staging ~f:(fun m -> not (List.is_empty m))
+              in
+              
+              (* Create new meld with this tile *)
+              let final_staging = new_staging @ [[tile]] in
+              
+              { model with 
+                staging_melds = final_staging;
+                dragging_tile = None;
+                drag_over_meld = None;
+                message = "New meld created. Add more tiles or Submit when done.";
+              }
+          )
+      | _ -> { model with dragging_tile = None; drag_over_meld = None }
+      )
+  
+  | RemoveTileFromStaging (meld_idx, tile_idx) ->
+      if not model.rearrange_mode then model
+      else
+        let new_staging = List.mapi model.staging_melds ~f:(fun i meld ->
+          if i = meld_idx then
+            List.filteri meld ~f:(fun j _ -> j <> tile_idx)
+          else meld
+        ) in
+        let new_staging = List.filter new_staging ~f:(fun m -> not (List.is_empty m)) in
+        { model with 
+          staging_melds = new_staging;
+          message = "Tile removed from meld";
+        }
+  
+  | SubmitRearrangement ->
+      (match model.game_state with
+      | None -> model
+      | Some state ->
+          if not model.rearrange_mode then model
+          else
+            (* Flatten all tiles from original board and staging area *)
+            let original_board_tiles = List.concat state.board in
+            let staging_board_tiles = List.concat model.staging_melds in
+            
+            (* Find tiles in staging that weren't in original board (tiles from hand) *)
+            let tiles_from_hand = 
+              let rec find_new_tiles staging original acc =
+                match staging with
+                | [] -> List.rev acc
+                | tile :: rest_staging ->
+                    (* Try to find this tile in original *)
+                    let rec find_and_remove t orig =
+                      match orig with
+                      | [] -> (None, [])
+                      | h :: tl ->
+                          if Stdlib.compare h t = 0 then (Some h, tl)
+                          else
+                            let (found, remaining) = find_and_remove t tl in
+                            (found, h :: remaining)
+                    in
+                    let (found, remaining_original) = find_and_remove tile original in
+                    match found with
+                    | Some _ -> find_new_tiles rest_staging remaining_original acc
+                    | None -> find_new_tiles rest_staging original (tile :: acc)
+              in
+              find_new_tiles staging_board_tiles original_board_tiles []
+            in
+            
+            (* Submit using table manipulation function *)
+            (match Rules.apply_play_with_table_manipulation state model.staging_melds tiles_from_hand with
+            | Ok new_state ->
+                let new_state = Rules.next_turn new_state in
+                { model with 
+                  game_state = Some new_state;
+                  selected_tiles = [];
+                  rearrange_mode = false;
+                  staging_melds = [];
+                  dragging_tile = None;
+                  drag_over_meld = None;
+                  message = "Table rearranged successfully!";
+                  last_drawn_tile_index = None;
+                }
+            | Error error_msg ->
+                { model with message = "Error: " ^ error_msg; }
+            )
+      )
+  
+  | CancelRearrangement ->
+      { model with 
+        rearrange_mode = false;
+        selected_tiles = [];
+        staging_melds = [];
+        dragging_tile = None;
+        drag_over_meld = None;
+        message = "Rearrange mode cancelled";
+        last_drawn_tile_index = None;
+      }
 
 let component =
   let%sub model_and_set_model = 
@@ -470,6 +838,10 @@ let component =
       game_mode = None;
       num_players = 2;
       last_drawn_tile_index = None;
+      rearrange_mode = false;
+      staging_melds = [];
+      dragging_tile = None;
+      drag_over_meld = None;
     }
   in
   let%arr (model, set_model) = model_and_set_model in
@@ -597,8 +969,13 @@ let component =
           Vdom.Node.h3
             ~attrs:[style_string "text-align: center; color: #6c757d; font-size: 1.2rem; \
                                   margin-bottom: 0.9375rem;"]
-            [Vdom.Node.text "Table"];
-          render_board state.board;
+            [Vdom.Node.text (if model.rearrange_mode then "Rearrange Mode - Drag & Drop Tiles" else "Table")];
+          (if model.rearrange_mode then
+            render_staging_area ~staging_melds:model.staging_melds 
+              ~drag_over_meld:model.drag_over_meld ~inject
+          else
+            render_board ~board:state.board ~rearrange_mode:false 
+              ~selected_board_tiles:[] ~inject);
         ] in
       
       let players_style = match model.num_players with
@@ -621,6 +998,7 @@ let component =
             ~last_drawn_tile_index:(if is_current then model.last_drawn_tile_index else None)
             ~inject
             ~hide_tiles
+            ~rearrange_mode:model.rearrange_mode
         ))) in
       
       let button_style color = 
@@ -630,34 +1008,77 @@ let component =
       in
       
       let controls = if not is_game_over then
-        Vdom.Node.div
-          ~attrs:[style_string "display: flex; gap: 0.625rem; justify-content: center; \
-                                margin-top: 1.25rem; flex-wrap: wrap;"]
-          [
-            Vdom.Node.button
-              ~attrs:(
-                let base_attrs = [
-                  style_string (button_style "#28a745");
-                  Vdom.Attr.on_click (fun _ -> inject PlaySelected);
-                ] in
-                if List.is_empty model.selected_tiles then
-                  Vdom.Attr.disabled :: base_attrs
-                else base_attrs
-              )
-              [Vdom.Node.text "Play Selected"];
-            Vdom.Node.button
-              ~attrs:[
-                style_string (button_style "#667eea");
-                Vdom.Attr.on_click (fun _ -> inject DrawTile);
-              ]
-              [Vdom.Node.text "Draw"];
-            Vdom.Node.button
-              ~attrs:[
-                style_string (button_style "#6c757d");
-                Vdom.Attr.on_click (fun _ -> inject PassTurn);
-              ]
-              [Vdom.Node.text "Pass"];
-          ]
+        if model.rearrange_mode then
+          (* Rearrange mode controls *)
+          Vdom.Node.div
+            ~attrs:[style_string "display: flex; gap: 0.625rem; justify-content: center; \
+                                  margin-top: 1.25rem; flex-wrap: wrap;"]
+            [
+              Vdom.Node.button
+                ~attrs:(
+                  let base_attrs = [
+                    style_string (button_style "#667eea");
+                    Vdom.Attr.on_click (fun _ -> inject AddToNewMeld);
+                  ] in
+                  if List.is_empty model.selected_tiles then
+                    Vdom.Attr.disabled :: base_attrs
+                  else base_attrs
+                )
+                [Vdom.Node.text "Add to New Meld"];
+              Vdom.Node.button
+                ~attrs:(
+                  let base_attrs = [
+                    style_string (button_style "#28a745");
+                    Vdom.Attr.on_click (fun _ -> inject SubmitRearrangement);
+                  ] in
+                  if List.is_empty model.staging_melds then
+                    Vdom.Attr.disabled :: base_attrs
+                  else base_attrs
+                )
+                [Vdom.Node.text "Submit Rearrangement"];
+              Vdom.Node.button
+                ~attrs:[
+                  style_string (button_style "#dc3545");
+                  Vdom.Attr.on_click (fun _ -> inject CancelRearrangement);
+                ]
+                [Vdom.Node.text "Cancel"];
+            ]
+        else
+          (* Normal mode controls *)
+          Vdom.Node.div
+            ~attrs:[style_string "display: flex; gap: 0.625rem; justify-content: center; \
+                                  margin-top: 1.25rem; flex-wrap: wrap;"]
+            [
+              Vdom.Node.button
+                ~attrs:(
+                  let base_attrs = [
+                    style_string (button_style "#28a745");
+                    Vdom.Attr.on_click (fun _ -> inject PlaySelected);
+                  ] in
+                  if List.is_empty model.selected_tiles then
+                    Vdom.Attr.disabled :: base_attrs
+                  else base_attrs
+                )
+                [Vdom.Node.text "Play Selected"];
+              Vdom.Node.button
+                ~attrs:[
+                  style_string (button_style "#667eea");
+                  Vdom.Attr.on_click (fun _ -> inject DrawTile);
+                ]
+                [Vdom.Node.text "Draw"];
+              Vdom.Node.button
+                ~attrs:[
+                  style_string (button_style "#6c757d");
+                  Vdom.Attr.on_click (fun _ -> inject PassTurn);
+                ]
+                [Vdom.Node.text "Pass"];
+              Vdom.Node.button
+                ~attrs:[
+                  style_string (button_style "#fd7e14");
+                  Vdom.Attr.on_click (fun _ -> inject ToggleRearrangeMode);
+                ]
+                [Vdom.Node.text "Rearrange Table"];
+            ]
       else
         Vdom.Node.div
           ~attrs:[style_string "display: flex; gap: 0.625rem; justify-content: center; \

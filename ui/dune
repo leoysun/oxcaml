@@ -1,6 +1,13 @@
-(executables
+; (executable
+;  (modes js)
+;  (name tictactoe_ui)
+;  (libraries bonsai bonsai_web core tictactoe_logic_library)
+;  (preprocess
+;   (pps ppx_jane bonsai.ppx_bonsai)))
+
+(executable
  (modes js)
- (names tictactoe_ui)
- (libraries bonsai.web core virtual_dom tictactoe_logic_library)
+ (name rummikub_app)
+ (libraries bonsai.web core rummikub)
  (preprocess
   (pps ppx_jane bonsai.ppx_bonsai)))

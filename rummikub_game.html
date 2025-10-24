@@ -22,6 +22,8 @@
             overflow-x: hidden;
             -webkit-font-smoothing: antialiased;
             -moz-osx-font-smoothing: grayscale;
+            /* Prevent pull-to-refresh on mobile */
+            overscroll-behavior-y: contain;
         }
 
         #app {
@@ -119,68 +121,6 @@
     </div>
 
     <script defer src="_build/default/ui/rummikub_app.bc.js"></script>
-
-    <script>
-        // Service Worker registration for offline support (optional)
-        if ('serviceWorker' in navigator) {
-            window.addEventListener('load', () => {
-                // Uncomment to enable service worker
-                // navigator.serviceWorker.register('/sw.js').then(registration => {
-                //     console.log('SW registered: ', registration);
-                // }).catch(registrationError => {
-                //     console.log('SW registration failed: ', registrationError);
-                // });
-            });
-        }
-
-        // Prevent pull-to-refresh on mobile
-        let touchStartY = 0;
-        document.addEventListener('touchstart', (e) => {
-            touchStartY = e.touches[0].clientY;
-        }, { passive: false });
-
-        document.addEventListener('touchmove', (e) => {
-            const touchY = e.touches[0].clientY;
-            const touchYDelta = touchY - touchStartY;
-            
-            if (touchYDelta > 0 && window.scrollY === 0) {
-                e.preventDefault();
-            }
-        }, { passive: false });
-
-        // Viewport height fix for mobile browsers
-        function setVH() {
-            let vh = window.innerHeight * 0.01;
-            document.documentElement.style.setProperty('--vh', `${vh}px`);
-        }
-        
-        setVH();
-        window.addEventListener('resize', setVH);
-        window.addEventListener('orientationchange', setVH);
-
-        // Haptic feedback for touch devices (if supported)
-        function hapticFeedback() {
-            if ('vibrate' in navigator) {
-                navigator.vibrate(10);
-            }
-        }
-
-        // Add haptic feedback to all button clicks
-        document.addEventListener('click', (e) => {
-            if (e.target.tagName === 'BUTTON') {
-                hapticFeedback();
-            }
-        });
-
-        // Handle visibility changes to pause/resume game
-        document.addEventListener('visibilitychange', () => {
-            if (document.hidden) {
-                console.log('App hidden - game paused');
-            } else {
-                console.log('App visible - game resumed');
-            }
-        });
-    </script>
 </body>
 </html>
 
