@@ -4,3 +4,16 @@
  (name tictactoe_test_library)
  (inline_tests)
  (preprocess (pps ppx_jane)))
+
+ (test
+ (name expect_state)
+ (libraries rummikub ppx_expect.expect_test_helpers_core)
+ (preprocess (pps ppx_expect)))
+
+(test
+ (name rules_tests)
+ (libraries rummikub alcotest))
+
+(test
+ (name qcheck_tests)
+ (libraries rummikub qcheck-core))
