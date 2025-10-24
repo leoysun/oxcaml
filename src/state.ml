@@ -1,7 +1,7 @@
 open Tile
 open Meld
 
-module TileOrd = struct type t = tile let compare = Stdlib.compare end
+module TileOrd = struct type t = tile let compare = Tile.compare_tile end
 module M = Map.Make(TileOrd)
 
 module TileMultiset = struct

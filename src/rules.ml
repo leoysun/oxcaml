@@ -1,8 +1,7 @@
-open Tile
 open Meld
 open State
 
-let board_valid b = List.for_all is_meld b
+let board_valid b = List.for_all Meld.is_meld b
 
 let remove_meld_from_hand (h:State.TileMultiset.t) (m:meld) =
   let open State.TileMultiset in
@@ -12,12 +11,12 @@ let remove_meld_from_hand (h:State.TileMultiset.t) (m:meld) =
   in step h m
 
 let initial_30_ok melds =
-  let pts = List.fold_left (fun s m -> s + meld_points_for_initial m) 0 melds in
-  pts >= 30 && List.for_all is_meld melds
+  let pts = List.fold_left (fun s m -> s + Meld.meld_points_for_initial m) 0 melds in
+  pts >= 30 && List.for_all Meld.is_meld melds
 
 let apply_play st melds =
   let p = st.players.(st.turn) in
-  if not (List.for_all is_meld melds) then Error "Invalid meld(s)" else
+  if not (List.for_all Meld.is_meld melds) then Error "Invalid meld(s)" else
   let passes_initial =
     if p.met_initial_30 then true else initial_30_ok melds
   in
@@ -49,3 +48,15 @@ let apply_draw st =
     Ok { st with deck = rest }
 
 let next_turn st = { st with turn = (st.turn + 1) mod Array.length st.players }
+
+let is_game_over st =
+  Array.exists (fun p -> State.TileMultiset.to_list p.hand = []) st.players
+
+let get_winner st =
+  if is_game_over st then
+    let rec find_winner i =
+      if i >= Array.length st.players then None
+      else if State.TileMultiset.to_list st.players.(i).hand = [] then Some st.players.(i)
+      else find_winner (i + 1)
+    in find_winner 0
+  else None

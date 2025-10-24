@@ -5,3 +5,4 @@ type tile = Tile of color * rank | Joker
 val all_colors : color list
 val pp_tile : tile -> string
 val deck : unit -> tile list
+val compare_tile : tile -> tile -> int

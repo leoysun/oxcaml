@@ -1,0 +1,4 @@
+(library
+ (name rummikub)
+ (libraries core)
+ (preprocess (pps ppx_jane)))
