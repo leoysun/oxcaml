@@ -1,6 +1,5 @@
-
 (library
- (libraries core tictactoe_logic_library) 
+ (libraries core tictactoe_logic_library)
  (name tictactoe_test_library)
  (modules tictactoe_test_library)
  (inline_tests)
