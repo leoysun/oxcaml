@@ -2,18 +2,37 @@
 (library
  (libraries core tictactoe_logic_library) 
  (name tictactoe_test_library)
+ (modules tictactoe_test_library)
  (inline_tests)
  (preprocess (pps ppx_jane)))
 
- (test
+(test
  (name expect_state)
  (libraries rummikub ppx_expect.expect_test_helpers_core)
+ (modules expect_state)
  (preprocess (pps ppx_expect)))
 
 (test
  (name rules_tests)
- (libraries rummikub alcotest))
+ (libraries rummikub alcotest)
+ (modules rules_tests))
 
 (test
  (name qcheck_tests)
- (libraries rummikub qcheck-core))
+ (libraries rummikub qcheck-core)
+ (modules qcheck_tests))
+
+(test
+ (name random_tests)
+ (libraries rummikub qcheck-core)
+ (modules random_tests))
+
+(test
+ (name rummikub_state_tests)
+ (libraries rummikub alcotest)
+ (modules rummikub_state_tests))
+
+(test
+ (name ai_competition)
+ (libraries rummikub alcotest)
+ (modules ai_competition))
