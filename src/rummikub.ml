@@ -204,32 +204,27 @@ module Rules = struct
           else
             Error "Group: All tiles must have the same rank with different colors"
         else if List.length unique_colors = 1 then
-          (* Trying for a run *)
+          (* Trying for a run - provide better error message if is_run failed *)
+          let joker_count = List.length (List.filter (function Joker -> true | _ -> false) m) in
           let sorted_ranks = List.sort Int.compare ranks in
-          let rec check_consecutive = function
-            | [] | [_] -> true
-            | a :: b :: rest ->
-                if b = a then false  (* Duplicate rank *)
-                else if b <> a + 1 && b <> a + 2 then false  (* Gap too large *)
-                else check_consecutive (b :: rest)
+          let rec gaps acc = function
+            | a::b::xs -> if a=b then max_int else gaps (acc + (b-a-1)) (b::xs)
+            | _ -> acc
           in
-          let has_dup ranks =
+          let g = gaps 0 sorted_ranks in
+          let has_dup = 
             let sorted = List.sort Int.compare ranks in
             let rec check = function
               | [] | [_] -> false
               | a :: b :: rest -> a = b || check (b :: rest)
             in check sorted
           in
-          if has_dup ranks then
+          if has_dup then
             Error "Run: Cannot have duplicate ranks"
-          else if not (check_consecutive sorted_ranks) then
-            let gaps = List.fold_left (fun acc r ->
-              match acc with
-              | [] -> [r]
-              | prev :: _ -> if r - prev > 1 then r :: acc else acc
-            ) [] sorted_ranks in
-            Error (Printf.sprintf "Run: Ranks must be consecutive (gaps at: %s)" 
-              (String.concat ", " (List.map Int.to_string gaps)))
+          else if g = max_int then
+            Error "Run: Cannot have duplicate ranks"
+          else if g > joker_count then
+            Error (Printf.sprintf "Run: Need %d joker(s) to fill gaps, but only have %d joker(s)" g joker_count)
           else if (match List.rev sorted_ranks with [] -> false | max_rank :: _ -> max_rank > 13) then
             Error "Run: Ranks cannot exceed 13"
           else

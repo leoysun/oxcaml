@@ -3,6 +3,29 @@ open! Bonsai_web
 open! Bonsai.Let_syntax
 open Rummikub
 
+(* js_of_ocaml for DOM event handling *)
+module Js = Js_of_ocaml.Js
+module Dom = Js_of_ocaml.Dom
+module Dom_html = Js_of_ocaml.Dom_html
+
+(* Helper to create drag/drop attrs that prevent default *)
+let on_dragover_prevent_default effect =
+  Vdom.Attr.on_dragover (fun evt ->
+    (* Prevent default behavior to allow drop *)
+    let js_evt = Js.Unsafe.coerce evt in
+    ignore (Js.Unsafe.meth_call js_evt "preventDefault" [||]);
+    effect
+  )
+
+let on_drop_prevent_default effect =
+  Vdom.Attr.on_drop (fun evt ->
+    (* Prevent default behavior *)
+    let js_evt = Js.Unsafe.coerce evt in
+    ignore (Js.Unsafe.meth_call js_evt "preventDefault" [||]);
+    ignore (Js.Unsafe.meth_call js_evt "stopPropagation" [||]);
+    effect
+  )
+
 (* Game mode type *)
 type game_mode = VsComputer | PassAndPlay | ThreePlayer | FourPlayer [@@deriving sexp_of]
 
@@ -48,6 +71,7 @@ module Action = struct
     | DropOnNewMeld  (* create a new meld *)
     | EndDrag  (* cancelled drag *)
     | RemoveTileFromStaging of int * int  (* remove tile from staging meld *)
+    | AddTileFromBoard of int * int  (* (meld_index, tile_index) - click tile from board to staging *)
     | SubmitRearrangement
     | CancelRearrangement
   [@@deriving sexp_of]
@@ -94,7 +118,12 @@ let render_tile ~tile ~selected ~newly_drawn ~inject ~action =
     [Vdom.Node.text tile_text]
 
 let render_staging_meld ~meld ~meld_index ~is_drop_target ~inject =
-  let meld_tiles = List.mapi meld ~f:(fun tile_idx tile ->
+  (* Sort tiles for display while keeping track of original indices *)
+  (* Create list of (original_index, tile) pairs and sort by tile *)
+  let indexed_tiles = List.mapi meld ~f:(fun i t -> (i, t)) in
+  let sorted_indexed = List.sort indexed_tiles ~compare:(fun (_, t1) (_, t2) -> Tile.compare_tile t1 t2) in
+  
+  let meld_tiles = List.map sorted_indexed ~f:(fun (orig_idx, tile) ->
     let tile_text = tile_to_string tile in
     let color = tile_color tile in
     let style = Printf.sprintf
@@ -108,12 +137,13 @@ let render_staging_meld ~meld ~meld_index ~is_drop_target ~inject =
       ~attrs:[
         style_string style;
         Vdom.Attr.create "draggable" "true";
-        Vdom.Attr.on_dragstart (fun _evt -> inject (Action.StartDragFromStaging (meld_index, tile_idx)));
+        Vdom.Attr.on_dragstart (fun _evt -> inject (Action.StartDragFromStaging (meld_index, orig_idx)));
         Vdom.Attr.on_dragend (fun _evt -> inject Action.EndDrag);
       ]
       [Vdom.Node.text tile_text]
   ) in
   
+  (* Re-validate after every change - joker purpose may have changed *)
   let meld_validation = 
     if Meld.is_meld meld then
       Vdom.Node.span 
@@ -138,11 +168,9 @@ let render_staging_meld ~meld ~meld_index ~is_drop_target ~inject =
          border-radius: 8px; padding: 0.625rem; margin: 5px; min-width: 100px; \
          transition: all 0.2s ease;"
       else meld_style);
-      Vdom.Attr.create "ondragover" "event.preventDefault(); return false;";
-      Vdom.Attr.on_dragover (fun _evt -> inject (Action.DragOver (Some meld_index)));
+      on_dragover_prevent_default (inject (Action.DragOver (Some meld_index)));
       Vdom.Attr.on_dragleave (fun _evt -> inject (Action.DragOver None));
-      Vdom.Attr.create "ondrop" "event.preventDefault(); return false;";
-      Vdom.Attr.on_drop (fun _evt -> inject (Action.DropOnMeld meld_index));
+      on_drop_prevent_default (inject (Action.DropOnMeld meld_index));
     ]
     [
       Vdom.Node.div
@@ -298,25 +326,48 @@ let render_staging_area ~staging_melds ~drag_over_meld ~inject =
            min-height: 60px; text-align: center; color: #6c757d; \
            transition: all 0.2s ease;"
         );
-        Vdom.Attr.create "ondragover" "event.preventDefault(); return false;";
-        Vdom.Attr.on_dragover (fun _evt -> inject (Action.DragOver (Some (List.length staging_melds))));
+        on_dragover_prevent_default (inject (Action.DragOver (Some (List.length staging_melds))));
         Vdom.Attr.on_dragleave (fun _evt -> inject (Action.DragOver None));
-        Vdom.Attr.create "ondrop" "event.preventDefault(); return false;";
-        Vdom.Attr.on_drop (fun _evt -> inject Action.DropOnNewMeld);
+        on_drop_prevent_default (inject Action.DropOnNewMeld);
       ]
       [Vdom.Node.text "+ Drop here for new meld"]
   in
   
   Vdom.Node.div ~attrs:[] (staging_display @ [new_meld_zone])
 
-let render_board ~board ~rearrange_mode:_ ~selected_board_tiles:_ ~inject =
+let render_board ~board ~rearrange_mode ~selected_board_tiles:_ ~inject =
   if List.is_empty board then
     Vdom.Node.div
       ~attrs:[style_string "text-align: center; color: #6c757d; font-style: italic; padding: 2.5rem;"]
       [Vdom.Node.text "No tiles on the table yet"]
   else
     Vdom.Node.div ~attrs:[] (List.mapi board ~f:(fun meld_idx meld ->
-      render_staging_meld ~meld ~meld_index:meld_idx ~is_drop_target:false ~inject
+      if rearrange_mode then
+        (* In rearrange mode, make tiles clickable to add to staging *)
+        let meld_style = "display: inline-block; background: white; border: 2px solid #dee2e6; \
+                         border-radius: 8px; padding: 0.625rem; margin: 5px;"
+        in
+        Vdom.Node.div
+          ~attrs:[style_string meld_style]
+          (List.mapi meld ~f:(fun tile_idx tile ->
+            let tile_text = tile_to_string tile in
+            let color = tile_color tile in
+            let style = Printf.sprintf
+              "background: white; border: 2px solid %s; color: %s; border-radius: 8px; \
+               padding: 0.5rem 0.625rem; font-weight: bold; font-size: 0.9rem; \
+               min-width: 40px; text-align: center; cursor: pointer; \
+               transition: all 0.2s ease;"
+              color color
+            in
+            Vdom.Node.span
+              ~attrs:[
+                style_string style;
+                Vdom.Attr.on_click (fun _ -> inject (Action.AddTileFromBoard (meld_idx, tile_idx)));
+              ]
+              [Vdom.Node.text tile_text]
+          ))
+      else
+        render_staging_meld ~meld ~meld_index:meld_idx ~is_drop_target:false ~inject
     ))
 
 (* Simple AI *)
@@ -402,50 +453,72 @@ let apply_action (model : Model.t) (action : Action.t) : Model.t =
         | ThreePlayer -> 3
         | FourPlayer -> 4
       in
-      { model with game_mode = Some mode; num_players; last_drawn_tile_index = None }
+      (* Automatically start the game when mode is selected *)
+      let model = { model with game_mode = Some mode; num_players; last_drawn_tile_index = None } in
+      (* Start the game immediately with the selected mode *)
+      let rng = Stdlib.Random.State.make_self_init () in
+      let full_deck = State.shuffle rng (Tile.deck ()) in
+      let rec deal_hands n deck acc =
+        if n = 0 then (List.rev acc, deck)
+        else
+          let hand_tiles, remaining = List.split_n deck 14 in
+          let player_name = match mode with
+            | VsComputer -> 
+                if List.length acc = 0 then "You" else "Computer"
+            | PassAndPlay | ThreePlayer | FourPlayer ->
+                Printf.sprintf "Player %d" (List.length acc + 1)
+          in
+          let player = {
+            State.name = player_name;
+            hand = State.TileMultiset.of_list hand_tiles;
+            met_initial_30 = false;
+          } in
+          deal_hands (n - 1) remaining (player :: acc)
+      in
+      let players_list, remaining_deck = deal_hands num_players full_deck [] in
+      let base_state = State.initial_state rng in
+      let game_state = { base_state with 
+        players = Array.of_list players_list;
+        deck = remaining_deck;
+      }
+      in
+      { model with 
+        game_state = Some game_state;
+        selected_tiles = [];
+        message = "Game started! Make your first move.";
+        last_drawn_tile_index = None;
+      }
   
   | StartGame ->
       let mode = Option.value model.game_mode ~default:VsComputer in
       let rng = Stdlib.Random.State.make_self_init () in
       let num_players = model.num_players in
-      let base_state = State.initial_state rng in
       
-      let game_state =
-        if num_players = 2 then
-          match mode with
-          | VsComputer ->
-              { base_state with 
-                players = [|
-                  { (base_state.players.(0)) with name = "You" };
-                  { (base_state.players.(1)) with name = "Computer" };
-                |]
-              }
-          | _ ->
-              { base_state with 
-                players = [|
-                  { (base_state.players.(0)) with name = "Player 1" };
-                  { (base_state.players.(1)) with name = "Player 2" };
-                |]
-              }
+      (* Create game state with correct number of players *)
+      let full_deck = State.shuffle rng (Tile.deck ()) in
+      let rec deal_hands n deck acc =
+        if n = 0 then (List.rev acc, deck)
         else
-          (* Create more players by re-dealing from full deck *)
-          let full_deck = State.shuffle rng (Tile.deck ()) in
-          let rec deal_hands n deck acc =
-            if n = 0 then (List.rev acc, deck)
-            else
-              let hand_tiles, remaining = List.split_n deck 14 in
-              let player = {
-                State.name = Printf.sprintf "Player %d" (List.length acc + 1);
-                hand = State.TileMultiset.of_list hand_tiles;
-                met_initial_30 = false;
-              } in
-              deal_hands (n - 1) remaining (player :: acc)
+          let hand_tiles, remaining = List.split_n deck 14 in
+          let player_name = match mode with
+            | VsComputer -> 
+                if List.length acc = 0 then "You" else "Computer"
+            | PassAndPlay | ThreePlayer | FourPlayer ->
+                Printf.sprintf "Player %d" (List.length acc + 1)
           in
-          let players_list, remaining_deck = deal_hands num_players full_deck [] in
-          { base_state with 
-            players = Array.of_list players_list;
-            deck = remaining_deck;
-          }
+          let player = {
+            State.name = player_name;
+            hand = State.TileMultiset.of_list hand_tiles;
+            met_initial_30 = false;
+          } in
+          deal_hands (n - 1) remaining (player :: acc)
+      in
+      let players_list, remaining_deck = deal_hands num_players full_deck [] in
+      let base_state = State.initial_state rng in
+      let game_state = { base_state with 
+        players = Array.of_list players_list;
+        deck = remaining_deck;
+      }
       in
       { model with 
         game_state = Some game_state;
@@ -769,6 +842,26 @@ let apply_action (model : Model.t) (action : Action.t) : Model.t =
           message = "Tile removed from meld";
         }
   
+  | AddTileFromBoard (board_meld_idx, tile_idx) ->
+      (match model.game_state with
+      | None -> model
+      | Some state ->
+          if not model.rearrange_mode then model
+          else
+            (* Get tile from board *)
+            if board_meld_idx < List.length state.board then
+              let board_meld = List.nth_exn state.board board_meld_idx in
+              if tile_idx < List.length board_meld then
+                let tile = List.nth_exn board_meld tile_idx in
+                (* Add to new meld in staging *)
+                { model with
+                  staging_melds = model.staging_melds @ [[tile]];
+                  message = "Tile added from board. Continue rearranging or Submit when done.";
+                }
+              else model
+            else model
+      )
+  
   | SubmitRearrangement ->
       (match model.game_state with
       | None -> model
@@ -779,47 +872,62 @@ let apply_action (model : Model.t) (action : Action.t) : Model.t =
             let original_board_tiles = List.concat state.board in
             let staging_board_tiles = List.concat model.staging_melds in
             
-            (* Find tiles in staging that weren't in original board (tiles from hand) *)
-            let tiles_from_hand = 
-              let rec find_new_tiles staging original acc =
-                match staging with
-                | [] -> List.rev acc
-                | tile :: rest_staging ->
-                    (* Try to find this tile in original *)
-                    let rec find_and_remove t orig =
-                      match orig with
-                      | [] -> (None, [])
-                      | h :: tl ->
-                          if Stdlib.compare h t = 0 then (Some h, tl)
-                          else
-                            let (found, remaining) = find_and_remove t tl in
-                            (found, h :: remaining)
-                    in
-                    let (found, remaining_original) = find_and_remove tile original in
-                    match found with
-                    | Some _ -> find_new_tiles rest_staging remaining_original acc
-                    | None -> find_new_tiles rest_staging original (tile :: acc)
-              in
-              find_new_tiles staging_board_tiles original_board_tiles []
+            (* Validate: All melds must have at least 3 tiles *)
+            let invalid_meld_indices = 
+              List.mapi model.staging_melds ~f:(fun i meld -> (i, meld))
+              |> List.filter ~f:(fun (_, meld) -> List.length meld < 3)
+              |> List.map ~f:fst
             in
             
-            (* Submit using table manipulation function *)
-            (match Rules.apply_play_with_table_manipulation state model.staging_melds tiles_from_hand with
-            | Ok new_state ->
-                let new_state = Rules.next_turn new_state in
-                { model with 
-                  game_state = Some new_state;
-                  selected_tiles = [];
-                  rearrange_mode = false;
-                  staging_melds = [];
-                  dragging_tile = None;
-                  drag_over_meld = None;
-                  message = "Table rearranged successfully!";
-                  last_drawn_tile_index = None;
-                }
-            | Error error_msg ->
-                { model with message = "Error: " ^ error_msg; }
-            )
+            if not (List.is_empty invalid_meld_indices) then
+              { model with
+                message = Printf.sprintf 
+                  "Error: All melds must have at least 3 tiles. Meld(s) %s have fewer than 3 tiles."
+                  (String.concat ~sep:", " 
+                    (List.map invalid_meld_indices ~f:(fun idx -> Int.to_string (idx + 1))))
+              }
+            else
+              (* Find tiles in staging that weren't in original board (tiles from hand) *)
+              let tiles_from_hand = 
+                let rec find_new_tiles staging original acc =
+                  match staging with
+                  | [] -> List.rev acc
+                  | tile :: rest_staging ->
+                      (* Try to find this tile in original *)
+                      let rec find_and_remove t orig =
+                        match orig with
+                        | [] -> (None, [])
+                        | h :: tl ->
+                            if Stdlib.compare h t = 0 then (Some h, tl)
+                            else
+                              let (found, remaining) = find_and_remove t tl in
+                              (found, h :: remaining)
+                      in
+                      let (found, remaining_original) = find_and_remove tile original in
+                      match found with
+                      | Some _ -> find_new_tiles rest_staging remaining_original acc
+                      | None -> find_new_tiles rest_staging original (tile :: acc)
+                in
+                find_new_tiles staging_board_tiles original_board_tiles []
+              in
+              
+              (* Submit using table manipulation function *)
+              (match Rules.apply_play_with_table_manipulation state model.staging_melds tiles_from_hand with
+              | Ok new_state ->
+                  let new_state = Rules.next_turn new_state in
+                  { model with 
+                    game_state = Some new_state;
+                    selected_tiles = [];
+                    rearrange_mode = false;
+                    staging_melds = [];
+                    dragging_tile = None;
+                    drag_over_meld = None;
+                    message = "Table rearranged successfully!";
+                    last_drawn_tile_index = None;
+                  }
+              | Error error_msg ->
+                  { model with message = "Error: " ^ error_msg; }
+              )
       )
   
   | CancelRearrangement ->
@@ -888,33 +996,25 @@ let component =
                   Vdom.Node.button
                     ~attrs:[
                       style_string button_style;
-                      Vdom.Attr.on_click (fun _ -> 
-                        Vdom.Effect.Many [inject (SelectMode VsComputer); inject StartGame]
-                      );
+                      Vdom.Attr.on_click (fun _ -> inject (SelectMode VsComputer));
                     ]
                     [Vdom.Node.text "🤖 Play vs Computer"];
                   Vdom.Node.button
                     ~attrs:[
                       style_string button_style;
-                      Vdom.Attr.on_click (fun _ -> 
-                        Vdom.Effect.Many [inject (SelectMode PassAndPlay); inject StartGame]
-                      );
+                      Vdom.Attr.on_click (fun _ -> inject (SelectMode PassAndPlay));
                     ]
                     [Vdom.Node.text "📱 Pass-and-Play (2 Players)"];
                   Vdom.Node.button
                     ~attrs:[
                       style_string button_style;
-                      Vdom.Attr.on_click (fun _ -> 
-                        Vdom.Effect.Many [inject (SelectMode ThreePlayer); inject StartGame]
-                      );
+                      Vdom.Attr.on_click (fun _ -> inject (SelectMode ThreePlayer));
                     ]
                     [Vdom.Node.text "👥 Pass-and-Play (3 Players)"];
                   Vdom.Node.button
                     ~attrs:[
                       style_string button_style;
-                      Vdom.Attr.on_click (fun _ -> 
-                        Vdom.Effect.Many [inject (SelectMode FourPlayer); inject StartGame]
-                      );
+                      Vdom.Attr.on_click (fun _ -> inject (SelectMode FourPlayer));
                     ]
                     [Vdom.Node.text "👨‍👩‍👧‍👦 Pass-and-Play (4 Players)"];
                 ];
@@ -925,9 +1025,9 @@ let component =
       let is_game_over = Rules.is_game_over state in
       let winner = Rules.get_winner state in
       let current_player = state.players.(state.turn) in
-      let hide_tiles = match model.game_mode with
-        | Some VsComputer -> true
-        | _ -> false
+      (* In all game modes, only show the current player's tiles face-up *)
+      (* Always hide tiles for non-current players when a game is active *)
+      let hide_tiles = true
       in
       
       let container_style = "display: flex; flex-direction: column; align-items: center; \
@@ -975,8 +1075,20 @@ let component =
                                   margin-bottom: 0.9375rem;"]
             [Vdom.Node.text (if model.rearrange_mode then "Rearrange Mode - Drag & Drop Tiles" else "Table")];
           (if model.rearrange_mode then
-            render_staging_area ~staging_melds:model.staging_melds 
-              ~drag_over_meld:model.drag_over_meld ~inject
+            Vdom.Node.div
+              ~attrs:[]
+              [
+                Vdom.Node.p
+                  ~attrs:[style_string "color: #6c757d; margin-bottom: 10px; font-style: italic;"]
+                  [Vdom.Node.text "Click tiles from board below or drag from hand to add to staging area"];
+                render_staging_area ~staging_melds:model.staging_melds 
+                  ~drag_over_meld:model.drag_over_meld ~inject;
+                Vdom.Node.h4
+                  ~attrs:[style_string "color: #666; margin-top: 20px; margin-bottom: 10px;"]
+                  [Vdom.Node.text "Original Board (Click tiles to add to staging)"];
+                render_board ~board:state.board ~rearrange_mode:true 
+                  ~selected_board_tiles:[] ~inject;
+              ]
           else
             render_board ~board:state.board ~rearrange_mode:false 
               ~selected_board_tiles:[] ~inject);

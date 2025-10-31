@@ -41,4 +41,3 @@ cp _build/default/ui/tictactoe_ui.bc.js generated_js/
 Then commit the changes and surf to your github.io to see you site:
 https://yoav-zibin.github.io/oxcaml/
 
-

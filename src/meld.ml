@@ -42,7 +42,8 @@ let is_run m =
                  | [] | [_] -> true
                  | _ ->
                      let rmax = List.hd (List.rev sorted_ranks) in
-                     rmax + joker_count <= 13))
+                     (* Jokers fill gaps, so max rank stays at rmax *)
+                     rmax <= 13))
     | Joker::rest -> process_run color_opt ranks rest
     | Tile(c,r)::rest ->
         (match color_opt with
