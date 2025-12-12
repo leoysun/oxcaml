@@ -41,3 +41,16 @@ cp _build/default/ui/tictactoe_ui.bc.js generated_js/
 Then commit the changes and surf to your github.io to see you site:
 https://yoav-zibin.github.io/oxcaml/
 
+
+
+TODOs as of 10/31am: 
+- make the tile DISAPPEAR FROM PLAYER INVENTORY when it is added to a meld during tile rearrangement
+
+- Make Jokers moveable between melds, and do proper revalidation when this occurs
+
+- Allow player to TAKE JOKER INTO INVENTORY if they are able to replace it in the meld to keep the meld valid, or if the joker was not necessary to keep the meld valid in the first place. OBVIOUSLY do not save this action if the meld is invalid upon saving rearrangement.
+
+- DO NOT END TURN after any action is played; player must pass or draw to end turn
+
+- do not allow REARRANGING to bypass the 30-point first-move rule
+

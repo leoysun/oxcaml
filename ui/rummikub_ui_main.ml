@@ -1365,7 +1365,11 @@ let apply_action ~schedule_event (model : Model.t) (action : Action.t) : Model.t
           deck = deck_list;
         } in
         (* Save to Firestore - creator is player 0 *)
-        (Firestore.create_game (Obj.magic game_state : Firestore.State.t)
+        let user_id = match model.current_user with
+          | Some user -> user.uid
+          | None -> "unknown"
+        in
+        (Firestore.create_game_with_user (Obj.magic game_state : Firestore.State.t) user_id
           (fun game_id ->
             schedule_event (Action.GameCreated game_id))
           (fun error ->
@@ -1385,20 +1389,16 @@ let apply_action ~schedule_event (model : Model.t) (action : Action.t) : Model.t
         { model with message = "Please enter a game ID." }
       else
         let game_id = model.join_game_id_input in
-        Firestore.load_game_state game_id
-          (fun state_opt ->
-            match state_opt with
-            | Some state ->
-                (* Determine which player index we are - find first available slot or use last *)
-                (* For simplicity, assign to the last player slot *)
-                (* state is already Firestore.State.t, pass it directly to GameJoined *)
-                let state_cast = (Obj.magic state : Rummikub.State.t) in
-                let player_count = Array.length state_cast.players in
-                let player_idx = if player_count > 0 then player_count - 1 else 0 in
-                (* Store state in model and trigger GameJoined with game_id *)
-                schedule_event (Action.GameJoined (game_id, player_idx))
-            | None ->
-                schedule_event (Action.AuthError "Game not found"))
+        let user_id = match model.current_user with
+          | Some user -> user.uid
+          | None -> "unknown"
+        in
+        Firestore.join_game game_id user_id
+          (fun state player_idx ->
+            (* Store the state and trigger both GameJoined and GameStateUpdated *)
+            pending_state_update := Some state;
+            schedule_event (Action.GameJoined (game_id, player_idx));
+            schedule_event (Action.GameStateUpdated))
           (fun error ->
             schedule_event (Action.AuthError error));
         { model with 
@@ -1506,7 +1506,9 @@ let apply_action ~schedule_event (model : Model.t) (action : Action.t) : Model.t
         in_matchmaking = false;  (* No longer in matchmaking *)
         matchmaking_unsubscribe = None;
         unsubscribe_listener = Some unsubscribe;
-        message = "Game found! Loading...";
+        show_multiplayer_ui = false;  (* Hide the multiplayer UI *)
+        show_auth_ui = false;
+        message = "Game created! Waiting for opponent...";
       }
 
   | GameJoined (game_id_str, player_idx) ->
@@ -1531,18 +1533,26 @@ let apply_action ~schedule_event (model : Model.t) (action : Action.t) : Model.t
               schedule_event (Action.AuthError "Game not found"))
         (fun error ->
           schedule_event (Action.AuthError error));
-      (* Return model with game_id, player_index, and listener *)
+      (* Return model with game_id, player_index, listener, and hide multiplayer UI *)
       { model with 
         game_id = Some game_id_str;
         player_index = Some player_idx;
         unsubscribe_listener = Some unsubscribe;
+        show_multiplayer_ui = false;  (* Hide the multiplayer UI once joined *)
+        show_auth_ui = false;
+        message = Printf.sprintf "Joined game as Player %d" (player_idx + 1);
       }
 
   | ToggleAuthUI ->
       { model with show_auth_ui = not model.show_auth_ui }
 
   | ToggleMultiplayerUI ->
-      { model with show_multiplayer_ui = not model.show_multiplayer_ui }
+      (* When toggling multiplayer UI, also show auth UI if not signed in *)
+      let show_multiplayer = not model.show_multiplayer_ui in
+      { model with 
+        show_multiplayer_ui = show_multiplayer;
+        show_auth_ui = show_multiplayer && Option.is_none model.current_user
+      }
 
 let component =
   (* Use state_machine0 to get schedule_event for async callbacks *)

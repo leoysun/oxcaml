@@ -25,10 +25,8 @@ let set_doc (doc_ref : document_snapshot Js.t) (data : 'a Js.t) (on_success : un
     let msg = Js.Unsafe.get err "message" |> Js.to_string in
     on_error msg
   ) in
-  let then_fn = Js.Unsafe.get promise "then" in
-  let catch_fn = Js.Unsafe.get promise "catch" in
-  ignore (Js.Unsafe.fun_call then_fn [|Js.Unsafe.inject success_cb|]);
-  ignore (Js.Unsafe.fun_call catch_fn [|Js.Unsafe.inject error_cb|])
+  ignore (Js.Unsafe.meth_call promise "then" [|Js.Unsafe.inject success_cb|]);
+  ignore (Js.Unsafe.meth_call promise "catch" [|Js.Unsafe.inject error_cb|])
 
 let get_doc (doc_ref : document_snapshot Js.t) (on_success : document_snapshot Js.t -> unit) (on_error : string -> unit) : unit =
   let promise = Js.Unsafe.meth_call doc_ref "get" [||] in
@@ -48,10 +46,8 @@ let update_doc (doc_ref : document_snapshot Js.t) (data : 'a Js.t) (on_success :
     let msg = Js.Unsafe.get err "message" |> Js.to_string in
     on_error msg
   ) in
-  let then_fn = Js.Unsafe.get promise "then" in
-  let catch_fn = Js.Unsafe.get promise "catch" in
-  ignore (Js.Unsafe.fun_call then_fn [|Js.Unsafe.inject success_cb|]);
-  ignore (Js.Unsafe.fun_call catch_fn [|Js.Unsafe.inject error_cb|])
+  ignore (Js.Unsafe.meth_call promise "then" [|Js.Unsafe.inject success_cb|]);
+  ignore (Js.Unsafe.meth_call promise "catch" [|Js.Unsafe.inject error_cb|])
 
 [@@@warning "-32"]  (* Suppress unused-value warning *)
 let delete_doc (doc_ref : document_snapshot Js.t) (on_success : unit -> unit) (on_error : string -> unit) : unit =
@@ -61,10 +57,8 @@ let delete_doc (doc_ref : document_snapshot Js.t) (on_success : unit -> unit) (o
     let msg = Js.Unsafe.get err "message" |> Js.to_string in
     on_error msg
   ) in
-  let then_fn = Js.Unsafe.get promise "then" in
-  let catch_fn = Js.Unsafe.get promise "catch" in
-  ignore (Js.Unsafe.fun_call then_fn [|Js.Unsafe.inject success_cb|]);
-  ignore (Js.Unsafe.fun_call catch_fn [|Js.Unsafe.inject error_cb|])
+  ignore (Js.Unsafe.meth_call promise "then" [|Js.Unsafe.inject success_cb|]);
+  ignore (Js.Unsafe.meth_call promise "catch" [|Js.Unsafe.inject error_cb|])
 
 (* Real-time listener for a document *)
 [@@@warning "-32"]  (* Suppress unused-value warning *)
@@ -94,7 +88,16 @@ let on_snapshot_with_error
 
 (* Get data from a document snapshot *)
 let snapshot_data (snapshot : document_snapshot Js.t) : 'a Js.t option =
-  if Js.to_bool (Js.Unsafe.meth_call snapshot "exists" [||]) then
+  (* exists is a property in modern Firebase SDK, not a method *)
+  let exists_val = Js.Unsafe.get snapshot "exists" in
+  let exists_bool = 
+    (* Handle both property (boolean) and method (function) cases *)
+    if Js.to_string (Js.typeof exists_val) = "function" then
+      Js.to_bool (Js.Unsafe.meth_call snapshot "exists" [||])
+    else
+      Js.to_bool exists_val
+  in
+  if exists_bool then
     Some (Js.Unsafe.meth_call snapshot "data" [||])
   else
     None
@@ -137,14 +140,77 @@ let listen_to_game_state
     on_error
 
 (* Create a new game and return its ID via callback *)
-let create_game (state : State.t) (on_success : string -> unit) (on_error : string -> unit) : unit =
+(* user_id is the creator's user ID *)
+let create_game_with_user (state : State.t) (user_id : string) (on_success : string -> unit) (on_error : string -> unit) : unit =
   let db = get_firestore () in
   let collection_ref = Js.Unsafe.meth_call db "collection" [|Js.Unsafe.inject (Js.string "games")|] in
   let doc_ref = Js.Unsafe.meth_call collection_ref "doc" [||] in
-  let game_id = Js.Unsafe.meth_call doc_ref "id" [||] |> Js.to_string in
+  let game_id = Js.Unsafe.get doc_ref "id" |> Js.to_string in
   let data = state_to_firestore state in
+  (* Add player_ids array - creator is player 0, player 1 slot is empty *)
+  Js.Unsafe.set data (Js.string "player_ids") (Js.array [| Js.Unsafe.inject (Js.string user_id); Js.Unsafe.inject Js.null |]);
+  Js.Unsafe.set data (Js.string "status") (Js.string "waiting");  (* waiting for player 2 *)
   set_doc doc_ref data
     (fun () -> on_success game_id)
+    on_error
+
+(* Legacy create_game without user tracking *)
+let create_game (state : State.t) (on_success : string -> unit) (on_error : string -> unit) : unit =
+  create_game_with_user state "unknown" on_success on_error
+
+(* Join an existing game as player 2 *)
+let join_game (game_id : string) (user_id : string) (on_success : State.t -> int -> unit) (on_error : string -> unit) : unit =
+  let db = get_firestore () in
+  let doc_ref = doc db "games" game_id in
+  get_doc doc_ref
+    (fun snapshot ->
+      match snapshot_data snapshot with
+      | Some data ->
+          (* Check if player 2 slot is available *)
+          let player_ids = try Some (Js.Unsafe.get data "player_ids") with _ -> None in
+          let status = try Some (Js.Unsafe.get data "status" |> Js.to_string) with _ -> None in
+          
+          (match player_ids, status with
+           | Some ids, Some s when String.equal s "waiting" ->
+               (* Update player_ids[1] with the joining player *)
+               let ids_array = Js.to_array ids in
+               if Array.length ids_array >= 2 then begin
+                 (* Set player 2 *)
+                 Array.set ids_array 1 (Js.Unsafe.inject (Js.string user_id));
+                 let new_ids = Js.array ids_array in
+                 
+                 (* Update the document *)
+                 let update_data = Js.Unsafe.obj [||] in
+                 Js.Unsafe.set update_data (Js.string "player_ids") new_ids;
+                 Js.Unsafe.set update_data (Js.string "status") (Js.string "playing");
+                 
+                 let promise = Js.Unsafe.meth_call doc_ref "update" [|update_data|] in
+                 let success_cb = Js.wrap_callback (fun _ ->
+                   (* Parse game state and return success *)
+                   match state_of_firestore data with
+                   | Some state -> on_success state 1  (* Player 2 is index 1 *)
+                   | None -> on_error "Failed to parse game state"
+                 ) in
+                 let error_cb = Js.wrap_callback (fun err ->
+                   let msg = Js.Unsafe.get err "message" |> Js.to_string in
+                   on_error msg
+                 ) in
+                 ignore (Js.Unsafe.meth_call promise "then" [|Js.Unsafe.inject success_cb|]);
+                 ignore (Js.Unsafe.meth_call promise "catch" [|Js.Unsafe.inject error_cb|])
+               end else
+                 on_error "Invalid game structure"
+           | Some _, Some s when String.equal s "playing" ->
+               on_error "Game is already full"
+           | None, _ ->
+               (* Legacy game without player_ids - allow joining as player 1 *)
+               (match state_of_firestore data with
+                | Some state -> on_success state 1
+                | None -> on_error "Failed to parse game state")
+           | _, None ->
+               on_error "Game not found or invalid status"
+           | Some _, Some _ ->
+               on_error "Game has an unexpected status")
+      | None -> on_error "Game not found")
     on_error
 
 (* Matchmaking: Add player to queue and try to match with another player *)
@@ -171,14 +237,14 @@ let join_matchmaking_queue (user_id : string) (on_matched : string -> unit) (on_
       let waiting_doc = Array.get docs_array 0 in
       let waiting_data = Js.Unsafe.meth_call waiting_doc "data" [||] in
       let waiting_user_id = Js.Unsafe.get waiting_data "userId" |> Js.to_string in
-      let waiting_doc_id = Js.Unsafe.meth_call waiting_doc "id" [||] |> Js.to_string in
+      let waiting_doc_id = Js.Unsafe.get waiting_doc "id" |> Js.to_string in
       
       (* Create game with both players *)
       let rng = Stdlib.Random.State.make_self_init () in
       let initial_state = State.initial_state rng in
       let games_collection = Js.Unsafe.meth_call db "collection" [|Js.Unsafe.inject (Js.string "games")|] in
       let game_doc_ref = Js.Unsafe.meth_call games_collection "doc" [||] in
-      let game_id = Js.Unsafe.meth_call game_doc_ref "id" [||] |> Js.to_string in
+      let game_id = Js.Unsafe.get game_doc_ref "id" |> Js.to_string in
       
       (* Update player names to show user IDs *)
       let players = Array.copy initial_state.State.players in
@@ -267,7 +333,7 @@ let leave_matchmaking_queue (user_id : string) (on_success : unit -> unit) (on_e
     let docs = Js.Unsafe.meth_call query_snapshot "docs" [||] in
     let docs_array = Js.to_array docs in
     Array.iter (fun doc ->
-      let doc_ref = Js.Unsafe.meth_call queue_ref "doc" [|Js.Unsafe.inject (Js.Unsafe.meth_call doc "id" [||])|] in
+      let doc_ref = Js.Unsafe.meth_call queue_ref "doc" [|Js.Unsafe.inject (Js.Unsafe.get doc "id")|] in
       ignore (Js.Unsafe.meth_call doc_ref "delete" [||])
     ) docs_array;
     on_success ()

@@ -424,3 +424,9 @@ module AI = struct
         else
           Play best_combination
 end
+
+(* Export Firebase modules for use in UI *)
+module Firebase = Firebase
+module Firestore = Firestore
+module Auth = Auth
+module Game_sync = Game_sync

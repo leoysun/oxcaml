@@ -12,14 +12,20 @@ let tile_to_json = function
 
 let tile_of_json = function
   | `Assoc fields ->
+      (* Helper to extract rank as int from either Int or Float *)
+      let rank_opt = match List.assoc_opt "rank" fields with
+        | Some (`Int r) -> Some r
+        | Some (`Float f) -> Some (int_of_float f)
+        | _ -> None
+      in
       (match List.assoc_opt "type" fields with
        | Some (`String "joker") -> Some Joker
        | Some (`String "tile") ->
-           (match List.assoc_opt "color" fields, List.assoc_opt "rank" fields with
-            | Some (`String "red"), Some (`Int r) -> Some (Tile (Red, r))
-            | Some (`String "blue"), Some (`Int r) -> Some (Tile (Blue, r))
-            | Some (`String "black"), Some (`Int r) -> Some (Tile (Black, r))
-            | Some (`String "orange"), Some (`Int r) -> Some (Tile (Orange, r))
+           (match List.assoc_opt "color" fields, rank_opt with
+            | Some (`String "red"), Some r -> Some (Tile (Red, r))
+            | Some (`String "blue"), Some r -> Some (Tile (Blue, r))
+            | Some (`String "black"), Some r -> Some (Tile (Black, r))
+            | Some (`String "orange"), Some r -> Some (Tile (Orange, r))
             | _ -> None)
        | _ -> None)
   | _ -> None
@@ -69,14 +75,20 @@ let state_to_json state =
 
 let state_of_json = function
   | `Assoc fields ->
+      (* Helper to extract turn as int from either Int or Float *)
+      let turn_opt = match List.assoc_opt "turn" fields with
+        | Some (`Int t) -> Some t
+        | Some (`Float f) -> Some (int_of_float f)
+        | _ -> None
+      in
       (match List.assoc_opt "deck" fields,
              List.assoc_opt "board" fields,
              List.assoc_opt "players" fields,
-             List.assoc_opt "turn" fields with
+             turn_opt with
        | Some (`List deck_json),
          Some (`List board_json),
          Some (`List players_json),
-         Some (`Int turn) ->
+         Some turn ->
            (match List.filter_map tile_of_json deck_json,
                   List.filter_map meld_of_json board_json,
                   List.filter_map player_of_json players_json with
@@ -117,37 +129,49 @@ let json_to_js_value json =
   convert json
 
 let js_value_to_json js_val =
+  (* Helper to check if value is null or undefined using JavaScript *)
+  let is_null_or_undefined v =
+    let check_fn = Js.Unsafe.eval_string "(function(x) { return x === null || x === undefined; })" in
+    Js.to_bool (Js.Unsafe.fun_call check_fn [|Js.Unsafe.inject v|])
+  in
   let rec convert v =
-    let v_type = Js.to_string (Js.typeof v) in
-    if v_type = "string" then
-      `String (Js.to_string (Js.Unsafe.coerce v))
-    else if v_type = "number" then
-      `Float (Js.float_of_number (Js.Unsafe.coerce v))
-    else if v_type = "boolean" then
-      `Bool (Js.to_bool (Js.Unsafe.coerce v))
-    else if v_type = "object" then
-      let array_global = Js.Unsafe.get Js.Unsafe.global "Array" in
-      if Js.instanceof v array_global then
-        let arr = Js.to_array v in
-        `List (Array.to_list arr |> List.map convert)
-      else if (try Js.to_bool (Js.Unsafe.get v "data") with _ -> false) then
-        (* Firestore DocumentSnapshot - extract data() *)
-        let data = Js.Unsafe.meth_call v "data" [||] in
-        convert data
-      else
-        (* Plain object *)
-        let obj = Js.Unsafe.coerce v in
-        let object_global = Js.Unsafe.get Js.Unsafe.global "Object" in
-        let keys = Js.Unsafe.meth_call object_global "keys" [|obj|] in
-        let keys_arr = Js.to_array keys in
-        let assoc = Array.to_list keys_arr |> List.map (fun k ->
-          let key_str = Js.to_string k in
-          let value = Js.Unsafe.get obj k in
-          (key_str, convert value)
-        ) in
-        `Assoc assoc
-    else
+    (* Check for null/undefined first using direct JS check *)
+    if is_null_or_undefined v then
       `Null
+    else
+      let v_type = Js.to_string (Js.typeof v) in
+      if v_type = "undefined" then
+        `Null
+      else if v_type = "string" then
+        `String (Js.to_string (Js.Unsafe.coerce v))
+      else if v_type = "number" then
+        `Float (Js.float_of_number (Js.Unsafe.coerce v))
+      else if v_type = "boolean" then
+        `Bool (Js.to_bool (Js.Unsafe.coerce v))
+      else if v_type = "object" then
+        (* typeof null === "object" but we already checked above *)
+        let array_global = Js.Unsafe.get Js.Unsafe.global "Array" in
+        if Js.instanceof v array_global then
+          let arr = Js.to_array v in
+          `List (Array.to_list arr |> List.map convert)
+        else if (try Js.to_bool (Js.Unsafe.get v "data") with _ -> false) then
+          (* Firestore DocumentSnapshot - extract data() *)
+          let data = Js.Unsafe.meth_call v "data" [||] in
+          convert data
+        else
+          (* Plain object *)
+          let obj = Js.Unsafe.coerce v in
+          let object_global = Js.Unsafe.get Js.Unsafe.global "Object" in
+          let keys = Js.Unsafe.meth_call object_global "keys" [|obj|] in
+          let keys_arr = Js.to_array keys in
+          let assoc = Array.to_list keys_arr |> List.map (fun k ->
+            let key_str = Js.to_string k in
+            let value = Js.Unsafe.get obj k in
+            (key_str, convert value)
+          ) in
+          `Assoc assoc
+      else
+        `Null
   in
   convert js_val
 

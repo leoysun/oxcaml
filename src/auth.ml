@@ -10,11 +10,18 @@ type user = {
 }
 
 let user_of_js (js_user : 'a Js.t) : user =
+  let get_string_opt field =
+    let v = Js.Unsafe.get js_user field in
+    if Js.Opt.test (Js.Opt.return v) && Js.to_string (Js.typeof v) <> "undefined" then
+      let s = try Js.to_string v with _ -> "" in
+      if String.length s > 0 then Some s else None
+    else None
+  in
   {
     uid = Js.Unsafe.get js_user "uid" |> Js.to_string;
-    email = (try Some (Js.Unsafe.get js_user "email" |> Js.to_string) with _ -> None);
-    display_name = (try Some (Js.Unsafe.get js_user "displayName" |> Js.to_string) with _ -> None);
-    photo_url = (try Some (Js.Unsafe.get js_user "photoURL" |> Js.to_string) with _ -> None);
+    email = get_string_opt "email";
+    display_name = get_string_opt "displayName";
+    photo_url = get_string_opt "photoURL";
   }
 
 let current_user () : user option =
@@ -40,10 +47,8 @@ let sign_in_with_google (on_success : user -> unit) (on_error : string -> unit) 
     let msg = Js.Unsafe.get err "message" |> Js.to_string in
     on_error msg
   ) in
-  let then_fn = Js.Unsafe.get promise "then" in
-  let catch_fn = Js.Unsafe.get promise "catch" in
-  ignore (Js.Unsafe.fun_call then_fn [|Js.Unsafe.inject success_cb|]);
-  ignore (Js.Unsafe.fun_call catch_fn [|Js.Unsafe.inject error_cb|])
+  ignore (Js.Unsafe.meth_call promise "then" [|Js.Unsafe.inject success_cb|]);
+  ignore (Js.Unsafe.meth_call promise "catch" [|Js.Unsafe.inject error_cb|])
 
 (* Sign in with Facebook *)
 let sign_in_with_facebook (on_success : user -> unit) (on_error : string -> unit) : unit =
@@ -60,10 +65,8 @@ let sign_in_with_facebook (on_success : user -> unit) (on_error : string -> unit
     let msg = Js.Unsafe.get err "message" |> Js.to_string in
     on_error msg
   ) in
-  let then_fn = Js.Unsafe.get promise "then" in
-  let catch_fn = Js.Unsafe.get promise "catch" in
-  ignore (Js.Unsafe.fun_call then_fn [|Js.Unsafe.inject success_cb|]);
-  ignore (Js.Unsafe.fun_call catch_fn [|Js.Unsafe.inject error_cb|])
+  ignore (Js.Unsafe.meth_call promise "then" [|Js.Unsafe.inject success_cb|]);
+  ignore (Js.Unsafe.meth_call promise "catch" [|Js.Unsafe.inject error_cb|])
 
 (* Sign in with email and password *)
 let sign_in_with_email (email : string) (password : string) (on_success : user -> unit) (on_error : string -> unit) : unit =
@@ -111,10 +114,8 @@ let sign_in_anonymously (on_success : user -> unit) (on_error : string -> unit) 
     let msg = Js.Unsafe.get err "message" |> Js.to_string in
     on_error msg
   ) in
-  let then_fn = Js.Unsafe.get promise "then" in
-  let catch_fn = Js.Unsafe.get promise "catch" in
-  ignore (Js.Unsafe.fun_call then_fn [|Js.Unsafe.inject success_cb|]);
-  ignore (Js.Unsafe.fun_call catch_fn [|Js.Unsafe.inject error_cb|])
+  ignore (Js.Unsafe.meth_call promise "then" [|Js.Unsafe.inject success_cb|]);
+  ignore (Js.Unsafe.meth_call promise "catch" [|Js.Unsafe.inject error_cb|])
 
 (* Sign out *)
 let sign_out (on_success : unit -> unit) (on_error : string -> unit) : unit =

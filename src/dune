@@ -1,4 +1,4 @@
 (library
  (name rummikub)
- (libraries core)
+ (libraries core js_of_ocaml)
  (preprocess (pps ppx_jane)))
