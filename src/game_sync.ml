@@ -30,9 +30,17 @@ let tile_of_json = function
        | _ -> None)
   | _ -> None
 
-let meld_to_json meld = `List (List.map tile_to_json meld)
+(* Wrap meld in an object to avoid nested arrays (Firestore doesn't support them) *)
+let meld_to_json meld = `Assoc [("tiles", `List (List.map tile_to_json meld))]
 
 let meld_of_json = function
+  | `Assoc fields ->
+      (match List.assoc_opt "tiles" fields with
+       | Some (`List tiles) ->
+           let parsed = List.filter_map tile_of_json tiles in
+           if List.length parsed = List.length tiles then Some parsed else None
+       | _ -> None)
+  (* Also handle legacy format (raw list) for backwards compatibility *)
   | `List tiles -> 
       let parsed = List.filter_map tile_of_json tiles in
       if List.length parsed = List.length tiles then Some parsed else None
