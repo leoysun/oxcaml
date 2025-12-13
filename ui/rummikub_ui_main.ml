@@ -1437,7 +1437,8 @@ let apply_action ~schedule_event (model : Model.t) (action : Action.t) : Model.t
       }
 
   | (AuthError error_msg) ->
-      { model with message = Printf.sprintf "Auth error: %s" error_msg }
+      (* Display error with ❌ prefix for visibility *)
+      { model with message = Printf.sprintf "❌ %s" error_msg }
 
   | GameCreated game_id ->
       (* Set up real-time listener first *)
@@ -2171,9 +2172,16 @@ let component =
               [Vdom.Node.text "New Game"];
           ] in
       
-      let status_style = if String.is_prefix model.message ~prefix:"Error" then
+      let is_error_message = 
+        String.is_prefix model.message ~prefix:"Error" || 
+        String.is_prefix model.message ~prefix:"❌" ||
+        String.is_substring model.message ~substring:"error" ||
+        String.is_substring model.message ~substring:"failed"
+      in
+      let status_style = if is_error_message then
         "text-align: left; margin-top: 1.25rem; padding: 0.9375rem; border-radius: 8px; \
-         border: 1px solid #ffeaa7; background: #fff3cd; color: #856404; white-space: pre-wrap;"
+         border: 1px solid #f5c6cb; background: #f8d7da; color: #721c24; white-space: pre-wrap; \
+         font-weight: 500;"
       else
         "text-align: center; margin-top: 1.25rem; padding: 0.9375rem; border-radius: 8px; \
          border: 1px solid #c3e6cb; background: #d4edda; color: #155724; white-space: pre-wrap;"
