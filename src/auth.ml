@@ -10,15 +10,25 @@ type user = {
 }
 
 let user_of_js (js_user : 'a Js.t) : user =
+  (* Helper to check if a JS value is null or undefined *)
+  let is_null_or_undefined v =
+    let check_fn = Js.Unsafe.eval_string "(function(x) { return x === null || x === undefined; })" in
+    Js.to_bool (Js.Unsafe.fun_call check_fn [|Js.Unsafe.inject v|])
+  in
+  let get_string field =
+    let v = Js.Unsafe.get js_user field in
+    if is_null_or_undefined v then ""
+    else try Js.to_string v with _ -> ""
+  in
   let get_string_opt field =
     let v = Js.Unsafe.get js_user field in
-    if Js.Opt.test (Js.Opt.return v) && Js.to_string (Js.typeof v) <> "undefined" then
+    if is_null_or_undefined v then None
+    else 
       let s = try Js.to_string v with _ -> "" in
       if String.length s > 0 then Some s else None
-    else None
   in
   {
-    uid = Js.Unsafe.get js_user "uid" |> Js.to_string;
+    uid = get_string "uid";
     email = get_string_opt "email";
     display_name = get_string_opt "displayName";
     photo_url = get_string_opt "photoURL";

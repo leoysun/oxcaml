@@ -103,6 +103,7 @@ module Action = struct
     | UpdatePasswordInput of string
     | UpdateJoinGameId of string
     | CreateOnlineGame
+    | SetOnlinePlayerCount of int
     | JoinOnlineGame
     | QuickMatch
     | CancelQuickMatch
@@ -1323,6 +1324,9 @@ let apply_action ~schedule_event (model : Model.t) (action : Action.t) : Model.t
   | (UpdateJoinGameId game_id) ->
       { model with join_game_id_input = game_id }
 
+  | SetOnlinePlayerCount count ->
+      { model with num_players = count }
+
   | CreateOnlineGame ->
       (* Start a new game and then create it online *)
       if not model.firebase_initialized then
@@ -1369,7 +1373,7 @@ let apply_action ~schedule_event (model : Model.t) (action : Action.t) : Model.t
           | Some user -> user.uid
           | None -> "unknown"
         in
-        (Firestore.create_game_with_user (Obj.magic game_state : Firestore.State.t) user_id
+        (Firestore.create_game_with_user (Obj.magic game_state : Firestore.State.t) user_id num_players
           (fun game_id ->
             schedule_event (Action.GameCreated game_id))
           (fun error ->
@@ -1453,7 +1457,9 @@ let apply_action ~schedule_event (model : Model.t) (action : Action.t) : Model.t
       | Some firestore_state ->
           let state_cast = (Obj.magic firestore_state : Rummikub.State.t) in
           pending_state_update := None;  (* Clear after processing *)
-          { model with game_state = Some state_cast }
+          (* Also update num_players to match the actual game *)
+          let actual_num_players = Array.length state_cast.players in
+          { model with game_state = Some state_cast; num_players = actual_num_players }
       | None -> model)  (* No pending state - ignore *)
 
   | AuthStateChangedSignedIn _user_id ->
@@ -1819,7 +1825,48 @@ let component =
                           [Vdom.Node.text "Create New Game"];
                         Vdom.Node.p
                           ~attrs:[style_string "color: #666; font-size: 0.9rem;"]
-                          [Vdom.Node.text "Start a new game and share the game ID with your opponent."];
+                          [Vdom.Node.text "Select number of players and share the game ID with friends."];
+                        (* Player count selector *)
+                        Vdom.Node.div
+                          ~attrs:[style_string "display: flex; gap: 0.5rem; margin-bottom: 1rem;"]
+                          [
+                            Vdom.Node.button
+                              ~attrs:[
+                                style_string (if model.num_players = 2 
+                                  then "flex: 1; padding: 0.5rem; border: 2px solid #28a745; \
+                                        background: #28a745; color: white; border-radius: 5px; \
+                                        cursor: pointer; font-weight: bold;"
+                                  else "flex: 1; padding: 0.5rem; border: 2px solid #ccc; \
+                                        background: white; color: #333; border-radius: 5px; \
+                                        cursor: pointer;");
+                                Vdom.Attr.on_click (fun _ -> inject (Action.SetOnlinePlayerCount 2));
+                              ]
+                              [Vdom.Node.text "2 Players"];
+                            Vdom.Node.button
+                              ~attrs:[
+                                style_string (if model.num_players = 3
+                                  then "flex: 1; padding: 0.5rem; border: 2px solid #28a745; \
+                                        background: #28a745; color: white; border-radius: 5px; \
+                                        cursor: pointer; font-weight: bold;"
+                                  else "flex: 1; padding: 0.5rem; border: 2px solid #ccc; \
+                                        background: white; color: #333; border-radius: 5px; \
+                                        cursor: pointer;");
+                                Vdom.Attr.on_click (fun _ -> inject (Action.SetOnlinePlayerCount 3));
+                              ]
+                              [Vdom.Node.text "3 Players"];
+                            Vdom.Node.button
+                              ~attrs:[
+                                style_string (if model.num_players = 4
+                                  then "flex: 1; padding: 0.5rem; border: 2px solid #28a745; \
+                                        background: #28a745; color: white; border-radius: 5px; \
+                                        cursor: pointer; font-weight: bold;"
+                                  else "flex: 1; padding: 0.5rem; border: 2px solid #ccc; \
+                                        background: white; color: #333; border-radius: 5px; \
+                                        cursor: pointer;");
+                                Vdom.Attr.on_click (fun _ -> inject (Action.SetOnlinePlayerCount 4));
+                              ]
+                              [Vdom.Node.text "4 Players"];
+                          ];
                         Vdom.Node.button
                           ~attrs:[
                             style_string "background: #28a745; color: white; border: none; \
@@ -1827,7 +1874,7 @@ let component =
                                          cursor: pointer; font-weight: bold; width: 100%;";
                             Vdom.Attr.on_click (fun _ -> inject (Action.CreateOnlineGame));
                           ]
-                          [Vdom.Node.text "Create Game"];
+                          [Vdom.Node.text (Printf.sprintf "Create %d-Player Game" model.num_players)];
                         (match model.game_id with
                         | Some gid ->
                             Vdom.Node.div
