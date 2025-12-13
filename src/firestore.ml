@@ -238,80 +238,155 @@ let join_game (game_id : string) (user_id : string) (on_success : State.t -> int
       | None -> on_error "Game not found")
     on_error
 
-(* Matchmaking: Add player to queue and try to match with another player *)
+(* Matchmaking: Add player to queue and try to match with players for the same game size *)
+(* num_players: 2, 3, or 4 *)
 (* Returns unsubscribe function for the queue listener *)
-let join_matchmaking_queue (user_id : string) (on_matched : string -> unit) (on_error : string -> unit) : (unit -> unit) =
+let join_matchmaking_queue (user_id : string) (num_players : int) (on_matched : string -> int -> unit) (on_error : string -> unit) : (unit -> unit) =
   let db = get_firestore () in
   let queue_ref = Js.Unsafe.meth_call db "collection" [|Js.Unsafe.inject (Js.string "matchmaking")|] in
   
-  (* Check if there's already a waiting player *)
+  (* Check if there's already a waiting lobby for this game size *)
   let query = Js.Unsafe.meth_call queue_ref "where" [|
     Js.Unsafe.inject (Js.string "status");
     Js.Unsafe.inject (Js.string "==");
     Js.Unsafe.inject (Js.string "waiting")
   |] in
-  let query_limit = Js.Unsafe.meth_call query "limit" [|Js.Unsafe.inject (Js.number_of_float 1.0)|] in
+  let query_by_size = Js.Unsafe.meth_call query "where" [|
+    Js.Unsafe.inject (Js.string "numPlayers");
+    Js.Unsafe.inject (Js.string "==");
+    Js.Unsafe.inject (Js.number_of_float (Float.of_int num_players))
+  |] in
+  let query_limit = Js.Unsafe.meth_call query_by_size "limit" [|Js.Unsafe.inject (Js.number_of_float 1.0)|] in
   
   let promise = Js.Unsafe.meth_call query_limit "get" [||] in
   let success_cb = Js.wrap_callback (fun query_snapshot ->
-    let docs = Js.Unsafe.meth_call query_snapshot "docs" [||] in
+    let docs = Js.Unsafe.get query_snapshot "docs" in
     let docs_array = Js.to_array docs in
     
     if Array.length docs_array > 0 then
-      (* Found a waiting player - create a game with both players *)
-      let waiting_doc = Array.get docs_array 0 in
-      let waiting_data = Js.Unsafe.meth_call waiting_doc "data" [||] in
-      let waiting_user_id = Js.Unsafe.get waiting_data "userId" |> Js.to_string in
-      let waiting_doc_id = Js.Unsafe.get waiting_doc "id" |> Js.to_string in
+      (* Found a waiting lobby - join it *)
+      let lobby_doc = Array.get docs_array 0 in
+      let lobby_data = Js.Unsafe.meth_call lobby_doc "data" [||] in
+      let lobby_doc_id = Js.Unsafe.get lobby_doc "id" |> Js.to_string in
+      let lobby_doc_ref = Js.Unsafe.meth_call queue_ref "doc" [|Js.Unsafe.inject (Js.string lobby_doc_id)|] in
       
-      (* Create game with both players *)
-      let rng = Stdlib.Random.State.make_self_init () in
-      let initial_state = State.initial_state rng in
-      let games_collection = Js.Unsafe.meth_call db "collection" [|Js.Unsafe.inject (Js.string "games")|] in
-      let game_doc_ref = Js.Unsafe.meth_call games_collection "doc" [||] in
-      let game_id = Js.Unsafe.get game_doc_ref "id" |> Js.to_string in
+      (* Get current player list *)
+      let players_js = Js.Unsafe.get lobby_data "players" in
+      let players_array = Js.to_array players_js in
+      let current_count = Array.length players_array in
       
-      (* Update player names to show user IDs *)
-      let players = Array.copy initial_state.State.players in
-      players.(0) <- { players.(0) with State.name = Printf.sprintf "Player %s" (String.sub waiting_user_id 0 (min 8 (String.length waiting_user_id))) };
-      players.(1) <- { players.(1) with State.name = Printf.sprintf "Player %s" (String.sub user_id 0 (min 8 (String.length user_id))) };
-      let game_state = { initial_state with State.players = players } in
+      (* Add this player to the lobby *)
+      let new_players = Array.append players_array [|Js.Unsafe.inject (Js.string user_id)|] in
+      let player_idx = current_count in  (* This player's index *)
       
-      let game_data = state_to_firestore game_state in
-      set_doc game_doc_ref game_data
-        (fun () ->
-          (* Update waiting player's queue doc with gameId and status=matched *)
-          let waiting_doc_ref = Js.Unsafe.meth_call queue_ref "doc" [|Js.Unsafe.inject (Js.string waiting_doc_id)|] in
-          let update_data = Js.Unsafe.obj [||] in
-          Js.Unsafe.set update_data (Js.string "status") (Js.string "matched");
-          Js.Unsafe.set update_data (Js.string "gameId") (Js.string game_id);
-          update_doc waiting_doc_ref update_data
-            (fun () ->
-              (* Remove waiting player from queue after a short delay *)
-              ignore (Js.Unsafe.meth_call (Js.Unsafe.get Js.Unsafe.global "setTimeout") "call" [|
-                Js.Unsafe.inject (Js.wrap_callback (fun _ -> ignore (Js.Unsafe.meth_call waiting_doc_ref "delete" [||])));
-                Js.Unsafe.inject (Js.number_of_float 1000.0)
-              |]);
-              (* Notify current player immediately *)
-              on_matched game_id
-            )
-            on_error
-        )
-        on_error
+      if current_count + 1 >= num_players then
+        (* We have enough players - create the game! *)
+        let rng = Stdlib.Random.State.make_self_init () in
+        let base_state = State.initial_state rng in
+        
+        (* Create game state with correct number of players *)
+        let full_deck = State.shuffle rng (Tile.deck ()) in
+        let rec deal_hands n deck acc =
+          if n = 0 then (List.rev acc, deck)
+          else
+            let hand, remaining = 
+              let rec take n lst acc =
+                if n = 0 then (List.rev acc, lst)
+                else match lst with
+                  | [] -> (List.rev acc, [])
+                  | h :: t -> take (n-1) t (h :: acc)
+              in
+              take 14 deck []
+            in
+            let hand_multiset = State.TileMultiset.of_list hand in
+            let player_user_id = 
+              if num_players - n < Array.length new_players then
+                try 
+                  let js_val = Array.get new_players (num_players - n) in
+                  Js.to_string (Js.Unsafe.coerce js_val : Js.js_string Js.t)
+                with _ -> Printf.sprintf "Player%d" (num_players - n + 1)
+              else Printf.sprintf "Player%d" (num_players - n + 1)
+            in
+            let player = ({ 
+              State.name = Printf.sprintf "Player %s" (String.sub player_user_id 0 (min 8 (String.length player_user_id)));
+              hand = hand_multiset;
+              met_initial_30 = false;
+            } : State.player) in
+            deal_hands (n - 1) remaining (player :: acc)
+        in
+        let players_list, remaining_deck = deal_hands num_players full_deck [] in
+        let game_state = { base_state with
+          State.players = Array.of_list players_list;
+          deck = remaining_deck;
+        } in
+        
+        (* Create the game document *)
+        let games_collection = Js.Unsafe.meth_call db "collection" [|Js.Unsafe.inject (Js.string "games")|] in
+        let game_doc_ref = Js.Unsafe.meth_call games_collection "doc" [||] in
+        let game_id = Js.Unsafe.get game_doc_ref "id" |> Js.to_string in
+        
+        let game_data = state_to_firestore game_state in
+        (* Add player_ids array *)
+        Js.Unsafe.set game_data (Js.string "player_ids") (Js.array new_players);
+        Js.Unsafe.set game_data (Js.string "num_players") (Js.number_of_float (Float.of_int num_players));
+        Js.Unsafe.set game_data (Js.string "status") (Js.string "playing");
+        
+        set_doc game_doc_ref game_data
+          (fun () ->
+            (* Update lobby doc with gameId and status=matched *)
+            let update_data = Js.Unsafe.obj [||] in
+            Js.Unsafe.set update_data (Js.string "status") (Js.string "matched");
+            Js.Unsafe.set update_data (Js.string "gameId") (Js.string game_id);
+            update_doc lobby_doc_ref update_data
+              (fun () ->
+                (* Notify current player *)
+                on_matched game_id player_idx
+              )
+              on_error
+          )
+          on_error
+      else
+        (* Not enough players yet - just add to lobby *)
+        let update_data = Js.Unsafe.obj [||] in
+        Js.Unsafe.set update_data (Js.string "players") (Js.array new_players);
+        update_doc lobby_doc_ref update_data
+          (fun () ->
+            (* Set up listener to wait for game to start *)
+            let _unsubscribe = on_snapshot_with_error lobby_doc_ref
+              (fun snapshot ->
+                match snapshot_data snapshot with
+                | Some data ->
+                    let status = try Some (Js.Unsafe.get data "status" |> Js.to_string) with _ -> None in
+                    (match status with
+                    | Some "matched" ->
+                        let game_id = try Some (Js.Unsafe.get data "gameId" |> Js.to_string) with _ -> None in
+                        (match game_id with
+                        | Some gid -> 
+                            (* Remove from queue *)
+                            ignore (Js.Unsafe.meth_call lobby_doc_ref "delete" [||]);
+                            on_matched gid player_idx
+                        | None -> ())
+                    | _ -> ())
+                | None -> ())
+              on_error
+            in
+            ()
+          )
+          on_error
     else
-      (* No waiting player - add current player to queue *)
-      let queue_doc_ref = Js.Unsafe.meth_call queue_ref "doc" [||] in
-      let queue_data = Js.Unsafe.obj [||] in
-      Js.Unsafe.set queue_data (Js.string "userId") (Js.string user_id);
-      Js.Unsafe.set queue_data (Js.string "status") (Js.string "waiting");
-      (* Use JavaScript Date.now() to get timestamp *)
+      (* No waiting lobby - create one *)
+      let lobby_doc_ref = Js.Unsafe.meth_call queue_ref "doc" [||] in
+      let lobby_data = Js.Unsafe.obj [||] in
+      Js.Unsafe.set lobby_data (Js.string "players") (Js.array [|Js.Unsafe.inject (Js.string user_id)|]);
+      Js.Unsafe.set lobby_data (Js.string "numPlayers") (Js.number_of_float (Float.of_int num_players));
+      Js.Unsafe.set lobby_data (Js.string "status") (Js.string "waiting");
       let date_global = Js.Unsafe.get Js.Unsafe.global "Date" in
       let timestamp = Js.Unsafe.meth_call date_global "now" [||] in
-      Js.Unsafe.set queue_data (Js.string "timestamp") timestamp;
-      set_doc queue_doc_ref queue_data
+      Js.Unsafe.set lobby_data (Js.string "timestamp") timestamp;
+      set_doc lobby_doc_ref lobby_data
         (fun () ->
           (* Set up listener to wait for a match *)
-          let unsubscribe = on_snapshot_with_error queue_doc_ref
+          let _unsubscribe = on_snapshot_with_error lobby_doc_ref
             (fun snapshot ->
               match snapshot_data snapshot with
               | Some data ->
@@ -322,15 +397,14 @@ let join_matchmaking_queue (user_id : string) (on_matched : string -> unit) (on_
                       (match game_id with
                       | Some gid -> 
                           (* Remove from queue *)
-                          ignore (Js.Unsafe.meth_call queue_doc_ref "delete" [||]);
-                          on_matched gid
+                          ignore (Js.Unsafe.meth_call lobby_doc_ref "delete" [||]);
+                          on_matched gid 0  (* Creator is player 0 *)
                       | None -> ())
                   | _ -> ())
               | None -> ())
             on_error
           in
-          (* Store unsubscribe in a ref so we can return it *)
-          ignore unsubscribe
+          ()
         )
         on_error
   ) in
@@ -341,7 +415,7 @@ let join_matchmaking_queue (user_id : string) (on_matched : string -> unit) (on_
   ignore (Js.Unsafe.meth_call promise "then" [|Js.Unsafe.inject success_cb|]);
   ignore (Js.Unsafe.meth_call promise "catch" [|Js.Unsafe.inject error_cb|]);
   
-  (* Return unsubscribe function - for now return no-op, proper implementation would store the listener *)
+  (* Return unsubscribe function *)
   fun () -> ()
 
 (* Leave matchmaking queue *)
@@ -355,7 +429,7 @@ let leave_matchmaking_queue (user_id : string) (on_success : unit -> unit) (on_e
   |] in
   let promise = Js.Unsafe.meth_call query "get" [||] in
   let success_cb = Js.wrap_callback (fun query_snapshot ->
-    let docs = Js.Unsafe.meth_call query_snapshot "docs" [||] in
+    let docs = Js.Unsafe.get query_snapshot "docs" in  (* docs is a property, not a method *)
     let docs_array = Js.to_array docs in
     Array.iter (fun doc ->
       let doc_ref = Js.Unsafe.meth_call queue_ref "doc" [|Js.Unsafe.inject (Js.Unsafe.get doc "id")|] in

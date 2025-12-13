@@ -10,6 +10,6 @@ val listen_to_game_state : string -> (State.t -> unit) -> (string -> unit) -> un
 val create_game : State.t -> (string -> unit) -> (string -> unit) -> unit
 val create_game_with_user : State.t -> string -> int -> (string -> unit) -> (string -> unit) -> unit
 val join_game : string -> string -> (State.t -> int -> unit) -> (string -> unit) -> unit
-val join_matchmaking_queue : string -> (string -> unit) -> (string -> unit) -> unsubscribe
+val join_matchmaking_queue : string -> int -> (string -> int -> unit) -> (string -> unit) -> unsubscribe
 val leave_matchmaking_queue : string -> (unit -> unit) -> (string -> unit) -> unit
 

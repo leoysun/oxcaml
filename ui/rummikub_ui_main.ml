@@ -524,7 +524,8 @@ module SimpleAI = struct
       find_run [] acc sorted @ acc
     )
 
-  let find_best_play (state : Rummikub.State.t) player_idx =
+  (* Find a single valid meld to play, if any *)
+  let find_one_meld (state : Rummikub.State.t) player_idx =
     let player = state.players.(player_idx) in
     let tiles = tiles_from_hand player.hand in
     let groups = find_groups tiles in
@@ -532,16 +533,25 @@ module SimpleAI = struct
     let all_melds = groups @ runs in
     
     if not player.met_initial_30 then
+      (* Need to meet 30-point requirement *)
       let valid_initial = List.filter all_melds ~f:(fun meld ->
         Rummikub.Rules.initial_30_ok [meld]
       ) in
-      match valid_initial with
-      | meld :: _ -> Some [meld]
-      | [] -> None
+      List.hd valid_initial
     else
-      match all_melds with
-      | meld :: _ -> Some [meld]
-      | [] -> None
+      List.hd all_melds
+
+  (* Play all valid melds and return the final state, plus count of melds played *)
+  let play_all_melds (initial_state : Rummikub.State.t) player_idx =
+    let rec loop state melds_played =
+      match find_one_meld state player_idx with
+      | Some meld ->
+          (match Rummikub.Rules.apply_play state [meld] with
+           | Ok new_state -> loop new_state (melds_played + 1)
+           | Error _ -> (state, melds_played))  (* Meld failed, stop *)
+      | None -> (state, melds_played)  (* No more valid melds *)
+    in
+    loop initial_state 0
 end
 
 (* Mutable refs to store pending updates from Firestore/Auth (outside Bonsai system) *)
@@ -735,6 +745,14 @@ let apply_action ~schedule_event (model : Model.t) (action : Action.t) : Model.t
                 let new_state = Rummikub.Rules.next_turn new_state in
                 (* Save to Firestore if in multiplayer mode *)
                 save_game_state_if_online ~schedule_event model new_state;
+                (* Trigger bot move if it's now computer's turn *)
+                (match model.game_mode with
+                 | Some VsComputer when new_state.turn = 1 ->
+                     let _ = Js.Unsafe.meth_call Js.Unsafe.global "setTimeout" [|
+                       Js.Unsafe.inject (Js.wrap_callback (fun () -> schedule_event Action.BotMove));
+                       Js.Unsafe.inject (Js.number_of_float 500.0)
+                     |] in ()
+                 | _ -> ());
                 { model with 
                   game_state = Some (Obj.magic new_state : Rummikub.State.t);
                   selected_tiles = [];
@@ -763,6 +781,14 @@ let apply_action ~schedule_event (model : Model.t) (action : Action.t) : Model.t
             let new_state = Rummikub.Rules.next_turn state_cast in
             (* Save to Firestore if in multiplayer mode *)
             save_game_state_if_online ~schedule_event model new_state;
+            (* Trigger bot move if it's now computer's turn *)
+            (match model.game_mode with
+             | Some VsComputer when new_state.turn = 1 ->
+                 let _ = Js.Unsafe.meth_call Js.Unsafe.global "setTimeout" [|
+                   Js.Unsafe.inject (Js.wrap_callback (fun () -> schedule_event Action.BotMove));
+                   Js.Unsafe.inject (Js.number_of_float 500.0)
+                 |] in ()
+             | _ -> ());
             { model with 
               game_state = Some (Obj.magic new_state : Rummikub.State.t);
               selected_tiles = [];
@@ -785,49 +811,34 @@ let apply_action ~schedule_event (model : Model.t) (action : Action.t) : Model.t
       | Some state_any, Some VsComputer ->
           let state = (Obj.magic state_any : Rummikub.State.t) in
           if state.turn = 1 && not (Rummikub.Rules.is_game_over state) then
-            match SimpleAI.find_best_play state 1 with
-            | Some melds ->
-                (match Rummikub.Rules.apply_play state melds with
-                | Ok new_state ->
-                    let new_state = Rummikub.Rules.next_turn new_state in
-                    { model with 
-                      game_state = Some new_state;
-                      message = "Computer played a meld";
-                      last_drawn_tile_index = None;
-                    }
-                | Error _ ->
-                    match Rummikub.Rules.apply_draw state with
-                    | Ok new_state ->
-                        let new_state = Rummikub.Rules.next_turn new_state in
-                        { model with 
-                          game_state = Some new_state;
-                          message = "Computer drew a tile";
-                          last_drawn_tile_index = None;
-                        }
-                    | Error _ ->
-                        let new_state = Rummikub.Rules.next_turn state in
-                        { model with 
-                          game_state = Some new_state;
-                          message = "Computer passed";
-                          last_drawn_tile_index = None;
-                        }
-                )
-            | None ->
-                match Rummikub.Rules.apply_draw state with
-                | Ok new_state ->
-                    let new_state = Rummikub.Rules.next_turn new_state in
-                    { model with 
-                      game_state = Some new_state;
-                      message = "Computer drew a tile";
-                      last_drawn_tile_index = None;
-                    }
-                | Error _ ->
-                    let new_state = Rummikub.Rules.next_turn state in
-                    { model with 
-                      game_state = Some new_state;
-                      message = "Computer passed";
-                      last_drawn_tile_index = None;
-                    }
+            (* Play all valid melds *)
+            let (state_after_melds, melds_played) = SimpleAI.play_all_melds state 1 in
+            if melds_played > 0 then
+              (* Computer played melds, now pass to end turn *)
+              let new_state = Rummikub.Rules.next_turn state_after_melds in
+              { model with 
+                game_state = Some new_state;
+                message = Printf.sprintf "Computer played %d meld(s) and passed" melds_played;
+                last_drawn_tile_index = None;
+              }
+            else
+              (* No valid melds - draw a tile *)
+              match Rummikub.Rules.apply_draw state with
+              | Ok new_state ->
+                  let new_state = Rummikub.Rules.next_turn new_state in
+                  { model with 
+                    game_state = Some new_state;
+                    message = "Computer drew a tile";
+                    last_drawn_tile_index = None;
+                  }
+              | Error _ ->
+                  (* Can't draw (deck empty), just pass *)
+                  let new_state = Rummikub.Rules.next_turn state in
+                  { model with 
+                    game_state = Some new_state;
+                    message = "Computer passed (no tiles to draw)";
+                    last_drawn_tile_index = None;
+                  }
           else model
       | _ -> model
       )
@@ -1226,33 +1237,12 @@ let apply_action ~schedule_event (model : Model.t) (action : Action.t) : Model.t
         with
         | e -> { model with message = Printf.sprintf "Firebase init error: %s" (Exn.to_string e) })
 
+  (* Google and Facebook sign-in disabled for now *)
   | SignInWithGoogle ->
-      if not model.firebase_initialized then
-        { model with message = "Please initialize Firebase first" }
-      else (
-        Auth.sign_in_with_google
-          (fun user -> 
-            pending_auth_user := Some user;
-            pending_auth_user := Some user;
-            schedule_event (Action.AuthStateChangedSignedIn user.uid))
-          (fun error ->
-            schedule_event (Action.AuthError error));
-        { model with message = "Signing in with Google..." }
-      )
+      { model with message = "Google sign-in is currently disabled." }
 
   | SignInWithFacebook ->
-      if not model.firebase_initialized then
-        { model with message = "Please initialize Firebase first" }
-      else (
-        Auth.sign_in_with_facebook
-          (fun user ->
-            pending_auth_user := Some user;
-            pending_auth_user := Some user;
-            schedule_event (Action.AuthStateChangedSignedIn user.uid))
-          (fun error ->
-            schedule_event (Action.AuthError error));
-        { model with message = "Signing in with Facebook..." }
-      )
+      { model with message = "Facebook sign-in is currently disabled." }
 
   | SignInWithEmail ->
       if not model.firebase_initialized then
@@ -1410,46 +1400,12 @@ let apply_action ~schedule_event (model : Model.t) (action : Action.t) : Model.t
           message = Printf.sprintf "Joining game %s..." game_id 
         }
 
-  | QuickMatch ->
-      if not model.firebase_initialized then
-        { model with message = "Firebase not initialized. Please sign in first." }
-      else if Option.is_none model.current_user then
-        { model with message = "Please sign in to find a match." }
-      else if model.in_matchmaking then
-        model  (* Already in matchmaking *)
-      else
-        let user_id = match model.current_user with
-          | Some user -> user.uid
-          | None -> failwith "Should not happen - current_user checked above"
-        in
-        let unsubscribe = Firestore.join_matchmaking_queue user_id
-          (fun game_id ->
-            schedule_event (Action.GameCreated game_id))
-          (fun error ->
-            schedule_event (Action.AuthError error))
-        in
-        { model with 
-          in_matchmaking = true;
-          matchmaking_unsubscribe = Some unsubscribe;
-          message = "Searching for opponent..."
-        }
+  (* QuickMatch feature is disabled for now *)
+  | QuickMatch -> 
+      { model with message = "Quick match is currently disabled. Use 'Join Existing Game' instead." }
 
-  | CancelQuickMatch ->
-      if model.in_matchmaking then
-        (Option.iter model.matchmaking_unsubscribe ~f:(fun unsub -> unsub ());
-        (match model.current_user with
-        | Some user ->
-            Firestore.leave_matchmaking_queue user.uid
-              (fun () -> ())
-              (fun _ -> ())
-        | None -> ());
-        { model with 
-          in_matchmaking = false;
-          matchmaking_unsubscribe = None;
-          message = "Matchmaking cancelled"
-        })
-      else
-        model
+  | CancelQuickMatch -> 
+      model
 
   | GameStateUpdated ->
       (* Update game state from pending_state_update ref *)
@@ -1741,6 +1697,7 @@ let component =
                     Vdom.Node.div
                       ~attrs:[style_string "display: flex; flex-direction: column; gap: 0.75rem;"]
                       [
+                        (* Google and Facebook sign-in disabled for now
                         Vdom.Node.button
                           ~attrs:[
                             style_string "background: #4285f4; color: white; border: none; \
@@ -1757,6 +1714,7 @@ let component =
                           [Vdom.Node.text "📘 Sign in with Facebook"];
                         Vdom.Node.hr ~attrs:[style_string "margin: 0.5rem 0; border: none; \
                                                              border-top: 1px solid #ddd;"] ();
+                        *)
                         Vdom.Node.input
                           ~attrs:[
                             style_string "padding: 0.5rem; border: 1px solid #ddd; border-radius: 5px;";
@@ -1892,7 +1850,7 @@ let component =
                               ]
                         | None -> Vdom.Node.none);
                       ];
-                    (* Quick Match Section *)
+                    (* Quick Match Section - DISABLED FOR NOW
                     Vdom.Node.div
                       ~attrs:[style_string "padding: 1rem; background: white; border-radius: 8px; \
                                             border: 2px solid #ffc107;"]
@@ -1902,14 +1860,15 @@ let component =
                           [Vdom.Node.text "⚡ Quick Match"];
                         Vdom.Node.p
                           ~attrs:[style_string "color: #666; font-size: 0.9rem;"]
-                          [Vdom.Node.text "Find a random opponent instantly!"];
+                          [Vdom.Node.text (Printf.sprintf "Find %d random players for a %d-player game!" 
+                            (model.num_players - 1) model.num_players)];
                         (if model.in_matchmaking then
                           Vdom.Node.div
                             ~attrs:[style_string "text-align: center;"]
                             [
                               Vdom.Node.p
                                 ~attrs:[style_string "color: #ff9800; font-weight: bold; margin: 1rem 0;"]
-                                [Vdom.Node.text "🔍 Searching for opponent..."];
+                                [Vdom.Node.text (Printf.sprintf "🔍 Searching for %d-player game..." model.num_players)];
                               Vdom.Node.button
                                 ~attrs:[
                                   style_string "background: #dc3545; color: white; border: none; \
@@ -1928,8 +1887,9 @@ let component =
                                            font-size: 1.1rem;";
                               Vdom.Attr.on_click (fun _ -> inject (Action.QuickMatch));
                             ]
-                            [Vdom.Node.text "🎮 Find Match"]);
+                            [Vdom.Node.text (Printf.sprintf "🎮 Find %d-Player Match" model.num_players)]);
                       ];
+                    END Quick Match Section - DISABLED *)
                     (* Join Game Section *)
                     Vdom.Node.div
                       ~attrs:[style_string "padding: 1rem; background: white; border-radius: 8px;"]

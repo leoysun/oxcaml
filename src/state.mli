@@ -31,3 +31,4 @@ type t = {
 }
 
 val initial_state : Random.State.t -> t
+val shuffle : Random.State.t -> 'a list -> 'a list
