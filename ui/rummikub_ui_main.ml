@@ -44,6 +44,7 @@ module Model = struct
     game_mode : game_mode option;
     num_players : int;
     last_drawn_tile_index : int option;  (* Index of the most recently drawn tile *)
+    tiles_played_this_turn : bool;  (* Whether any tiles were played this turn - affects Draw/Pass availability *)
     rearrange_mode : bool;  (* Whether table manipulation mode is active *)
     staging_melds : Rummikub.Tile.tile list list;  (* Work-in-progress melds during rearrangement *)
     dragging_tile : drag_source option;  (* Currently dragged tile *)
@@ -346,44 +347,58 @@ let render_hand ~hand ~selected_tiles ~last_drawn_tile_index ~inject ~is_current
         render_tile ~tile ~selected ~newly_drawn ~inject ~action:(Action.ToggleTile i)
       ))
 
-let render_player ~(player : Rummikub.State.player) ~is_current ~is_winner ~selected_tiles ~last_drawn_tile_index ~inject ~hide_tiles ~rearrange_mode ~tiles_moved_from_hand =
-  let bg_color = 
-    if is_winner then "#d4edda"
-    else if is_current then "#e3f2fd"
-    else "#f8f9fa"
+let render_player ~(player : Rummikub.State.player) ~is_current ~is_winner ~is_me ~selected_tiles ~last_drawn_tile_index ~inject ~hide_tiles ~rearrange_mode ~tiles_moved_from_hand =
+  (* Dark minimalistic styling with Rummikub accent colors *)
+  let bg_color =
+    if is_winner then "#1a1a1a"
+    else if is_me then "#2d2d2d"  (* Slightly lighter for "me" *)
+    else if is_current then "#2d2d2d"
+    else "#242424"
   in
   let border_color =
     if is_winner then "#28a745"
-    else if is_current then "#667eea"
-    else "#dee2e6"
+    else if is_current then "#dc3545"  (* Red for active turn *)
+    else if is_me then "#007bff"  (* Blue for "me" *)
+    else "#333"
   in
   let indicator_color =
     if is_winner then "#28a745"
-    else if is_current then "#667eea"
-    else "#6c757d"
+    else if is_current then "#dc3545"  (* Red for active player *)
+    else "#555"
   in
   let player_style = Printf.sprintf
-    "background: %s; border-radius: 10px; padding: 1.25rem; border: 2px solid %s;"
+    "background: %s; border-radius: 4px; padding: 0.75rem; border-left: 3px solid %s;"
     bg_color border_color
+  in
+  (* Display name with (You) indicator if this is the current user *)
+  let display_name = 
+    if is_winner then player.name ^ " 🏆"
+    else if is_me then player.name ^ " (You)"
+    else player.name
+  in
+  let name_color = 
+    if is_winner then "#28a745"
+    else if is_me then "#007bff"
+    else if is_current then "#dc3545"
+    else "#999"
   in
   Vdom.Node.div
     ~attrs:[style_string player_style]
     [
       Vdom.Node.h3
-        ~attrs:[style_string "color: #333; margin-bottom: 0.9375rem; display: flex; \
-                              align-items: center; gap: 0.625rem;"]
+        ~attrs:[style_string (Printf.sprintf "color: %s; margin-bottom: 0.5rem; display: flex; \
+                              align-items: center; gap: 0.4rem; font-size: 0.9rem; font-weight: 500;" name_color)]
         [
           Vdom.Node.span
-            ~attrs:[style_string (Printf.sprintf "width: 12px; height: 12px; \
+            ~attrs:[style_string (Printf.sprintf "width: 6px; height: 6px; \
                                                    border-radius: 50%%; background: %s;"
                                                    indicator_color)]
             [];
-          Vdom.Node.text (if is_winner then player.name ^ " - WINNER! 🏆"
-                          else player.name);
+          Vdom.Node.text display_name;
         ];
       Vdom.Node.p
-        ~attrs:[]
-        [Vdom.Node.text (Printf.sprintf "Hand: %d tiles" 
+        ~attrs:[style_string "color: #666; font-size: 0.75rem; margin-bottom: 0.5rem;"]
+        [Vdom.Node.text (Printf.sprintf "%d tiles" 
           (List.length (Rummikub.State.TileMultiset.to_list player.hand)))];
       (if rearrange_mode && is_current then
         render_draggable_hand ~hand:player.hand ~selected_tiles ~inject ~tiles_moved_from_hand
@@ -612,13 +627,14 @@ let apply_action ~schedule_event (model : Model.t) (action : Action.t) : Model.t
         deck = deck_list;
       }
       in
-      { model with 
+      { model with
         game_state = Some game_state;
         selected_tiles = [];
+        tiles_played_this_turn = false;
         message = "Game started! Make your first move.";
         last_drawn_tile_index = None;
       }
-  
+
   | StartGame ->
       let mode = Option.value model.game_mode ~default:VsComputer in
       let rng = Stdlib.Random.State.make_self_init () in
@@ -657,6 +673,7 @@ let apply_action ~schedule_event (model : Model.t) (action : Action.t) : Model.t
       { model with 
         game_state = Some game_state;
         selected_tiles = [];
+        tiles_played_this_turn = false;
         message = "Game started! Make your first move.";
         last_drawn_tile_index = None;
       }
@@ -711,11 +728,12 @@ let apply_action ~schedule_event (model : Model.t) (action : Action.t) : Model.t
             | Ok new_state ->
                 (* Save to Firestore if in multiplayer mode *)
                 save_game_state_if_online ~schedule_event model new_state;
-                (* Don't end turn - player must explicitly pass or draw *)
-                { model with 
+                (* Don't end turn - player must explicitly end turn *)
+                { model with
                   game_state = Some (Obj.magic new_state : Rummikub.State.t);
                   selected_tiles = [];
-                  message = "Move played successfully! Continue playing or pass/draw to end turn.";
+                  tiles_played_this_turn = true;
+                  message = "Move played! Continue playing or end your turn.";
                   last_drawn_tile_index = None;
                 }
             | Error error_msg ->
@@ -754,16 +772,17 @@ let apply_action ~schedule_event (model : Model.t) (action : Action.t) : Model.t
                        Js.Unsafe.inject (Js.number_of_float 500.0)
                      |] in ()
                  | _ -> ());
-                { model with 
+                { model with
                   game_state = Some (Obj.magic new_state : Rummikub.State.t);
                   selected_tiles = [];
+                  tiles_played_this_turn = false;  (* Reset for next turn *)
                   message = "Drew a tile";
                   last_drawn_tile_index = drawn_tile_index;
                 }
             | Error error_msg ->
                 { model with message = "Error: " ^ error_msg; last_drawn_tile_index = None }
       )
-  
+
   | PassTurn ->
       (match model.game_state with
       | None -> model
@@ -790,18 +809,20 @@ let apply_action ~schedule_event (model : Model.t) (action : Action.t) : Model.t
                    Js.Unsafe.inject (Js.number_of_float 500.0)
                  |] in ()
              | _ -> ());
-            { model with 
+            { model with
               game_state = Some (Obj.magic new_state : Rummikub.State.t);
               selected_tiles = [];
-              message = "Passed turn";
+              tiles_played_this_turn = false;  (* Reset for next turn *)
+              message = "Turn ended";
               last_drawn_tile_index = None;
             }
       )
-  
+
   | NewGame ->
-      { model with 
+      { model with
         game_state = None;
         selected_tiles = [];
+        tiles_played_this_turn = false;
         message = "Select game mode";
         game_mode = None;
         last_drawn_tile_index = None;
@@ -1149,17 +1170,18 @@ let apply_action ~schedule_event (model : Model.t) (action : Action.t) : Model.t
                       in
                       (* Save to Firestore if in multiplayer mode *)
                       save_game_state_if_online ~schedule_event model updated_state;
-                      (* Don't end turn - player must explicitly pass or draw *)
+                      (* Don't end turn - player must explicitly end turn *)
                       { model with 
                         game_state = Some updated_state;
                         selected_tiles = [];
+                        tiles_played_this_turn = not (List.is_empty tiles_from_hand);  (* Tiles played if any from hand *)
                         rearrange_mode = false;
                         staging_melds = [];
                         tiles_moved_from_hand = [];
                         jokers_taken_from_board = [];
                         dragging_tile = None;
                         drag_over_meld = None;
-                        message = "Table rearranged successfully! Continue playing or pass/draw to end turn.";
+                        message = "Table rearranged! Continue playing or end your turn.";
                         last_drawn_tile_index = None;
                       }
                   | Error error_msg ->
@@ -1186,17 +1208,18 @@ let apply_action ~schedule_event (model : Model.t) (action : Action.t) : Model.t
                     in
                     (* Save to Firestore if in multiplayer mode *)
                     save_game_state_if_online ~schedule_event model updated_state;
-                    (* Don't end turn - player must explicitly pass or draw *)
+                    (* Don't end turn - player must explicitly end turn *)
                     { model with 
                       game_state = Some updated_state;
                       selected_tiles = [];
+                      tiles_played_this_turn = not (List.is_empty tiles_from_hand);  (* Tiles played if any from hand *)
                       rearrange_mode = false;
                       staging_melds = [];
                       tiles_moved_from_hand = [];
                       jokers_taken_from_board = [];
                       dragging_tile = None;
                       drag_over_meld = None;
-                      message = "Table rearranged successfully! Continue playing or pass/draw to end turn.";
+                      message = "Table rearranged! Continue playing or end your turn.";
                       last_drawn_tile_index = None;
                     }
                 | Error error_msg ->
@@ -1326,7 +1349,6 @@ let apply_action ~schedule_event (model : Model.t) (action : Action.t) : Model.t
         { model with message = "Please sign in to create an online game." }
       else
         (* First start a local game, then save it to Firestore *)
-        let mode = Option.value model.game_mode ~default:PassAndPlay in
         let rng = Stdlib.Random.State.make_self_init () in
         let num_players = model.num_players in
         
@@ -1336,12 +1358,8 @@ let apply_action ~schedule_event (model : Model.t) (action : Action.t) : Model.t
           if n = 0 then (List.rev acc, deck)
           else
             let hand_tiles, remaining = List.split_n deck 14 in
-            let player_name = match mode with
-              | VsComputer -> 
-                  if List.length acc = 0 then "You" else "Computer"
-              | PassAndPlay | ThreePlayer | FourPlayer ->
-                  Printf.sprintf "Player %d" (List.length acc + 1)
-            in
+            (* For online games, always use "Player N" naming *)
+            let player_name = Printf.sprintf "Player %d" (List.length acc + 1) in
             (* Create player record - use type annotation to disambiguate *)
             let hand_multiset = Rummikub.State.TileMultiset.of_list (Obj.magic hand_tiles : Rummikub.Tile.tile list) in
             let player = ({
@@ -1361,19 +1379,26 @@ let apply_action ~schedule_event (model : Model.t) (action : Action.t) : Model.t
         } in
         (* Save to Firestore - creator is player 0 *)
         let user_id = match model.current_user with
-          | Some user -> user.uid
-          | None -> "unknown"
+          | Some user when not (String.is_empty user.uid) -> user.uid
+          | _ -> ""
         in
-        (Firestore.create_game_with_user (Obj.magic game_state : Firestore.State.t) user_id num_players
-          (fun game_id ->
-            schedule_event (Action.GameCreated game_id))
-          (fun error ->
-            schedule_event (Action.AuthError error));
-        { model with 
-          game_state = Some (Obj.magic game_state : Rummikub.State.t);
-          player_index = Some 0;  (* Creator is always player 0 *)
-          message = "Creating online game...";
-        })
+        if String.is_empty user_id then
+          { model with message = "❌ Invalid user session. Please sign out and sign in again." }
+        else begin
+          (* Log user_id for debugging *)
+          let _ = Js.Unsafe.meth_call (Js.Unsafe.get Js.Unsafe.global "console") "log" 
+            [|Js.Unsafe.inject (Js.string (Printf.sprintf "[Create] User ID: %s" user_id))|] in
+          Firestore.create_game_with_user (Obj.magic game_state : Firestore.State.t) user_id num_players
+            (fun game_id ->
+              schedule_event (Action.GameCreated game_id))
+            (fun error ->
+              schedule_event (Action.AuthError error));
+          { model with 
+            game_state = Some (Obj.magic game_state : Rummikub.State.t);
+            player_index = Some 0;  (* Creator is always player 0 *)
+            message = "Creating online game...";
+          }
+        end
 
   | JoinOnlineGame ->
       if not model.firebase_initialized then
@@ -1385,21 +1410,28 @@ let apply_action ~schedule_event (model : Model.t) (action : Action.t) : Model.t
       else
         let game_id = model.join_game_id_input in
         let user_id = match model.current_user with
-          | Some user -> user.uid
-          | None -> "unknown"
+          | Some user when not (String.is_empty user.uid) -> user.uid
+          | _ -> ""
         in
-        Firestore.join_game game_id user_id
-          (fun state player_idx ->
-            (* Store the state and trigger both GameJoined and GameStateUpdated *)
-            pending_state_update := Some state;
-            schedule_event (Action.GameJoined (game_id, player_idx));
-            schedule_event (Action.GameStateUpdated))
-          (fun error ->
-            schedule_event (Action.AuthError error));
-        { model with 
-          game_id = Some game_id;
-          message = Printf.sprintf "Joining game %s..." game_id 
-        }
+        if String.is_empty user_id then
+          { model with message = "❌ Invalid user session. Please sign out and sign in again." }
+        else begin
+          (* Log user_id for debugging *)
+          let _ = Js.Unsafe.meth_call (Js.Unsafe.get Js.Unsafe.global "console") "log" 
+            [|Js.Unsafe.inject (Js.string (Printf.sprintf "[Join] User ID: %s, Game ID: %s" user_id game_id))|] in
+          Firestore.join_game game_id user_id
+            (fun state player_idx ->
+              (* Store the state and trigger both GameJoined and GameStateUpdated *)
+              pending_state_update := Some state;
+              schedule_event (Action.GameJoined (game_id, player_idx));
+              schedule_event (Action.GameStateUpdated))
+            (fun error ->
+              schedule_event (Action.AuthError error));
+          { model with 
+            game_id = Some game_id;
+            message = Printf.sprintf "Joining game %s..." game_id 
+          }
+        end
 
   (* QuickMatch feature is disabled for now *)
   | QuickMatch -> 
@@ -1416,13 +1448,33 @@ let apply_action ~schedule_event (model : Model.t) (action : Action.t) : Model.t
           pending_state_update := None;  (* Clear after processing *)
           (* Also update num_players to match the actual game *)
           let actual_num_players = Array.length state_cast.players in
-          { model with game_state = Some state_cast; num_players = actual_num_players }
+          (* Check if turn changed - if so, reset tiles_played_this_turn *)
+          let turn_changed = match model.game_state with
+            | Some old_state -> old_state.turn <> state_cast.turn
+            | None -> true
+          in
+          { model with 
+            game_state = Some state_cast; 
+            num_players = actual_num_players;
+            tiles_played_this_turn = if turn_changed then false else model.tiles_played_this_turn;
+          }
       | None -> model)  (* No pending state - ignore *)
 
   | AuthStateChangedSignedIn _user_id ->
       (* Get the actual user object from the ref *)
       let user_opt = !pending_auth_user in
       pending_auth_user := None;  (* Clear after processing *)
+      (* Log user info for debugging *)
+      (match user_opt with
+      | Some user ->
+          let _ = Js.Unsafe.meth_call (Js.Unsafe.get Js.Unsafe.global "console") "log" 
+            [|Js.Unsafe.inject (Js.string (Printf.sprintf "[AuthStateChanged] User signed in - uid: %s, email: %s" 
+              user.uid (Option.value user.email ~default:"<no email>")))|] in
+          ()
+      | None ->
+          let _ = Js.Unsafe.meth_call (Js.Unsafe.get Js.Unsafe.global "console") "log" 
+            [|Js.Unsafe.inject (Js.string "[AuthStateChanged] WARNING: User object is None!")|] in
+          ());
       { model with
         current_user = user_opt;
         message = (match user_opt with
@@ -1531,6 +1583,7 @@ let component =
         game_mode = None;
         num_players = 2;
         last_drawn_tile_index = None;
+        tiles_played_this_turn = false;
         rearrange_mode = false;
         staging_melds = [];
         dragging_tile = None;
@@ -1605,22 +1658,35 @@ let component =
   
   match model.game_state with
   | None ->
-      (* Mode selection screen *)
+      (* Mode selection screen - Minimalistic Rummikub theme *)
+      (* Rummikub colors: Red #dc3545, Blue #007bff, Black #1a1a1a, Orange #fd7e14 *)
       let container_style = "display: flex; flex-direction: column; align-items: center; \
-                             padding: 1.25rem; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); \
-                             min-height: 100vh;"
+                             padding: 2rem; background: #1a1a1a; min-height: 100vh;"
       in
-      let game_container_style = "background: white; border-radius: 15px; padding: 1.875rem; \
-                                   max-width: 1200px; width: 100%;"
+      let game_container_style = "background: #fafafa; border-radius: 4px; padding: 2.5rem; \
+                                   max-width: 500px; width: 100%; box-shadow: 0 4px 20px rgba(0,0,0,0.3);"
       in
-      let title_style = "text-align: center; color: #333; margin-bottom: 1.875rem; font-size: 2.5rem;"
+      let title_style = "text-align: center; color: #1a1a1a; margin-bottom: 0.5rem; font-size: 2.5rem; \
+                         font-weight: 300; letter-spacing: 0.3rem;"
       in
-      let mode_selection_style = "display: flex; flex-direction: column; gap: 1.25rem; \
-                                   max-width: 600px; margin: auto;"
+      let mode_selection_style = "display: flex; flex-direction: column; gap: 0.75rem;"
       in
-      let button_style = "background: #667eea; color: white; border: none; border-radius: 8px; \
-                          padding: 1.25rem; font-size: 1.2rem; font-weight: bold; cursor: pointer; \
-                          transition: all 0.2s ease;"
+      (* Each button uses a different Rummikub tile color *)
+      let btn_red = "background: #dc3545; color: white; border: none; border-radius: 3px; \
+                     padding: 1rem; font-size: 1rem; font-weight: 500; cursor: pointer; \
+                     transition: opacity 0.2s ease; letter-spacing: 0.05rem;"
+      in
+      let btn_blue = "background: #007bff; color: white; border: none; border-radius: 3px; \
+                      padding: 1rem; font-size: 1rem; font-weight: 500; cursor: pointer; \
+                      transition: opacity 0.2s ease; letter-spacing: 0.05rem;"
+      in
+      let btn_black = "background: #1a1a1a; color: white; border: none; border-radius: 3px; \
+                       padding: 1rem; font-size: 1rem; font-weight: 500; cursor: pointer; \
+                       transition: opacity 0.2s ease; letter-spacing: 0.05rem;"
+      in
+      let btn_orange = "background: #fd7e14; color: white; border: none; border-radius: 3px; \
+                        padding: 1rem; font-size: 1rem; font-weight: 500; cursor: pointer; \
+                        transition: opacity 0.2s ease; letter-spacing: 0.05rem;"
       in
       Vdom.Node.div
         ~attrs:[style_string container_style]
@@ -1630,96 +1696,79 @@ let component =
             ([
               Vdom.Node.h1
                 ~attrs:[style_string title_style]
-                [Vdom.Node.text "🀄 Rummikub"];
+                [Vdom.Node.text "RUMMIKUB"];
+              Vdom.Node.p
+                ~attrs:[style_string "text-align: center; color: #666; margin-bottom: 2rem; font-size: 0.9rem;"]
+                [Vdom.Node.text "Select a game mode to begin"];
               Vdom.Node.div
                 ~attrs:[style_string mode_selection_style]
                 [
-                  Vdom.Node.h2
-                    ~attrs:[style_string "text-align: center; margin-bottom: 1.5rem;"]
-                    [Vdom.Node.text "Select Game Mode"];
                   Vdom.Node.button
                     ~attrs:[
-                      style_string button_style;
+                      style_string btn_black;
                       Vdom.Attr.on_click (fun _ -> inject (SelectMode VsComputer));
                     ]
-                    [Vdom.Node.text "🤖 Play vs Computer"];
+                    [Vdom.Node.text "vs Computer"];
                   Vdom.Node.button
                     ~attrs:[
-                      style_string button_style;
+                      style_string btn_red;
                       Vdom.Attr.on_click (fun _ -> inject (SelectMode PassAndPlay));
                     ]
-                    [Vdom.Node.text "📱 Pass-and-Play (2 Players)"];
+                    [Vdom.Node.text "2 Players"];
                   Vdom.Node.button
                     ~attrs:[
-                      style_string button_style;
+                      style_string btn_blue;
                       Vdom.Attr.on_click (fun _ -> inject (SelectMode ThreePlayer));
                     ]
-                    [Vdom.Node.text "👥 Pass-and-Play (3 Players)"];
+                    [Vdom.Node.text "3 Players"];
                   Vdom.Node.button
                     ~attrs:[
-                      style_string button_style;
+                      style_string btn_orange;
                       Vdom.Attr.on_click (fun _ -> inject (SelectMode FourPlayer));
                     ]
-                    [Vdom.Node.text "👨‍👩‍👧‍👦 Pass-and-Play (4 Players)"];
+                    [Vdom.Node.text "4 Players"];
+                  Vdom.Node.div ~attrs:[style_string "height: 1px; background: #ddd; margin: 0.5rem 0;"] [];
                   Vdom.Node.button
                     ~attrs:[
-                      style_string (button_style ^ " background: #28a745;");
+                      style_string (btn_black ^ " background: transparent; color: #1a1a1a; border: 2px solid #1a1a1a;");
                       Vdom.Attr.on_click (fun _ -> inject (Action.ToggleMultiplayerUI));
                     ]
-                    [Vdom.Node.text "🌐 Online Multiplayer"];
+                    [Vdom.Node.text "Online Multiplayer"];
                 ];
             ]
             @
             (if model.show_auth_ui || (model.firebase_initialized && Option.is_none model.current_user) then
             [Vdom.Node.div
-              ~attrs:[style_string "margin-top: 2rem; padding: 1.5rem; background: #f8f9fa; \
-                                    border-radius: 10px; border: 2px solid #667eea;"]
+              ~attrs:[style_string "margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px solid #eee;"]
               [
-                Vdom.Node.h3
-                  ~attrs:[style_string "margin-top: 0; margin-bottom: 1rem; text-align: center;"]
-                  [Vdom.Node.text "Sign In to Play Online"];
+                Vdom.Node.p
+                  ~attrs:[style_string "margin: 0 0 1rem 0; text-align: center; color: #666; font-size: 0.85rem;"]
+                  [Vdom.Node.text "Sign in to play online"];
                 (match model.current_user with
                 | Some user ->
                     Vdom.Node.div
                       ~attrs:[style_string "text-align: center;"]
                       [
                         Vdom.Node.p
-                          ~attrs:[style_string "margin: 0.5rem 0;"]
-                          [Vdom.Node.text (Printf.sprintf "Signed in as: %s" 
-                            (Option.value user.email ~default:user.uid))];
+                          ~attrs:[style_string "margin: 0 0 0.75rem 0; color: #333; font-size: 0.9rem;"]
+                          [Vdom.Node.text (Printf.sprintf "Signed in: %s" 
+                            (Option.value user.email ~default:(String.prefix user.uid 8)))];
                         Vdom.Node.button
                           ~attrs:[
-                            style_string "background: #dc3545; color: white; border: none; \
-                                         border-radius: 5px; padding: 0.5rem 1rem; cursor: pointer;";
+                            style_string "background: transparent; color: #dc3545; border: 1px solid #dc3545; \
+                                         border-radius: 3px; padding: 0.4rem 1rem; cursor: pointer; font-size: 0.85rem;";
                             Vdom.Attr.on_click (fun _ -> inject (Action.SignOut));
                           ]
                           [Vdom.Node.text "Sign Out"];
                       ]
                 | None ->
                     Vdom.Node.div
-                      ~attrs:[style_string "display: flex; flex-direction: column; gap: 0.75rem;"]
+                      ~attrs:[style_string "display: flex; flex-direction: column; gap: 0.5rem;"]
                       [
-                        (* Google and Facebook sign-in disabled for now
-                        Vdom.Node.button
-                          ~attrs:[
-                            style_string "background: #4285f4; color: white; border: none; \
-                                         border-radius: 5px; padding: 0.75rem; cursor: pointer;";
-                            Vdom.Attr.on_click (fun _ -> inject (Action.SignInWithGoogle));
-                          ]
-                          [Vdom.Node.text "🔵 Sign in with Google"];
-                        Vdom.Node.button
-                          ~attrs:[
-                            style_string "background: #1877f2; color: white; border: none; \
-                                         border-radius: 5px; padding: 0.75rem; cursor: pointer;";
-                            Vdom.Attr.on_click (fun _ -> inject (Action.SignInWithFacebook));
-                          ]
-                          [Vdom.Node.text "📘 Sign in with Facebook"];
-                        Vdom.Node.hr ~attrs:[style_string "margin: 0.5rem 0; border: none; \
-                                                             border-top: 1px solid #ddd;"] ();
-                        *)
                         Vdom.Node.input
                           ~attrs:[
-                            style_string "padding: 0.5rem; border: 1px solid #ddd; border-radius: 5px;";
+                            style_string "padding: 0.6rem; border: 1px solid #ddd; border-radius: 3px; \
+                                         font-size: 0.9rem;";
                             Vdom.Attr.type_ "email";
                             Vdom.Attr.placeholder "Email";
                             Vdom.Attr.value model.email_input;
@@ -1728,37 +1777,41 @@ let component =
                           ();
                         Vdom.Node.input
                           ~attrs:[
-                            style_string "padding: 0.5rem; border: 1px solid #ddd; border-radius: 5px;";
+                            style_string "padding: 0.6rem; border: 1px solid #ddd; border-radius: 3px; \
+                                         font-size: 0.9rem;";
                             Vdom.Attr.type_ "password";
                             Vdom.Attr.placeholder "Password";
                             Vdom.Attr.value model.password_input;
                             Vdom.Attr.on_input (fun _ s -> inject (Action.UpdatePasswordInput s));
                           ]
                           ();
+                        Vdom.Node.div
+                          ~attrs:[style_string "display: flex; gap: 0.5rem;"]
+                          [
+                            Vdom.Node.button
+                              ~attrs:[
+                                style_string "flex: 1; background: #1a1a1a; color: white; border: none; \
+                                             border-radius: 3px; padding: 0.6rem; cursor: pointer; font-size: 0.85rem;";
+                                Vdom.Attr.on_click (fun _ -> inject (Action.SignInWithEmail));
+                              ]
+                              [Vdom.Node.text "Sign In"];
+                            Vdom.Node.button
+                              ~attrs:[
+                                style_string "flex: 1; background: transparent; color: #1a1a1a; \
+                                             border: 1px solid #1a1a1a; border-radius: 3px; padding: 0.6rem; \
+                                             cursor: pointer; font-size: 0.85rem;";
+                                Vdom.Attr.on_click (fun _ -> inject (Action.CreateAccountWithEmail));
+                              ]
+                              [Vdom.Node.text "Create Account"];
+                          ];
+                        Vdom.Node.div ~attrs:[style_string "height: 1px; background: #eee; margin: 0.25rem 0;"] [];
                         Vdom.Node.button
                           ~attrs:[
-                            style_string "background: #667eea; color: white; border: none; \
-                                         border-radius: 5px; padding: 0.75rem; cursor: pointer;";
-                            Vdom.Attr.on_click (fun _ -> inject (Action.SignInWithEmail));
-                          ]
-                          [Vdom.Node.text "Sign in with Email"];
-                        Vdom.Node.button
-                          ~attrs:[
-                            style_string "background: #6c757d; color: white; border: none; \
-                                         border-radius: 5px; padding: 0.75rem; cursor: pointer;";
-                            Vdom.Attr.on_click (fun _ -> inject (Action.CreateAccountWithEmail));
-                          ]
-                          [Vdom.Node.text "Create Account"];
-                        Vdom.Node.hr ~attrs:[style_string "margin: 0.5rem 0; border: none; \
-                                                             border-top: 1px solid #ddd;"] ();
-                        Vdom.Node.button
-                          ~attrs:[
-                            style_string "background: #17a2b8; color: white; border: none; \
-                                         border-radius: 5px; padding: 0.75rem; cursor: pointer; \
-                                         font-weight: bold;";
+                            style_string "background: #007bff; color: white; border: none; \
+                                         border-radius: 3px; padding: 0.6rem; cursor: pointer; font-size: 0.85rem;";
                             Vdom.Attr.on_click (fun _ -> inject (Action.SignInAnonymously));
                           ]
-                          [Vdom.Node.text "🎮 Play as Guest (Quick Start)"];
+                          [Vdom.Node.text "Quick Play as Guest"];
                       ]);
               ];
             ]
@@ -1767,87 +1820,84 @@ let component =
             @
             (if model.show_multiplayer_ui && model.firebase_initialized && Option.is_some model.current_user then
             [Vdom.Node.div
-              ~attrs:[style_string "margin-top: 2rem; padding: 1.5rem; background: #e7f3ff; \
-                                    border-radius: 10px; border: 2px solid #28a745;"]
+              ~attrs:[style_string "margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px solid #eee;"]
               [
-                Vdom.Node.h3
-                  ~attrs:[style_string "margin-top: 0; margin-bottom: 1rem; text-align: center;"]
-                  [Vdom.Node.text "🌐 Online Multiplayer"];
+                Vdom.Node.p
+                  ~attrs:[style_string "margin: 0 0 1rem 0; text-align: center; color: #1a1a1a; \
+                                        font-size: 0.9rem; font-weight: 500;"]
+                  [Vdom.Node.text "ONLINE MULTIPLAYER"];
                 Vdom.Node.div
                   ~attrs:[style_string "display: flex; flex-direction: column; gap: 1rem;"]
                   [
                     (* Create Game Section *)
                     Vdom.Node.div
-                      ~attrs:[style_string "padding: 1rem; background: white; border-radius: 8px;"]
+                      ~attrs:[style_string ""]
                       [
-                        Vdom.Node.h4
-                          ~attrs:[style_string "margin-top: 0;"]
-                          [Vdom.Node.text "Create New Game"];
                         Vdom.Node.p
-                          ~attrs:[style_string "color: #666; font-size: 0.9rem;"]
-                          [Vdom.Node.text "Select number of players and share the game ID with friends."];
-                        (* Player count selector *)
+                          ~attrs:[style_string "margin: 0 0 0.5rem 0; color: #666; font-size: 0.8rem;"]
+                          [Vdom.Node.text "Create game — share the code with friends"];
+                        (* Player count selector using Rummikub colors *)
                         Vdom.Node.div
-                          ~attrs:[style_string "display: flex; gap: 0.5rem; margin-bottom: 1rem;"]
+                          ~attrs:[style_string "display: flex; gap: 0.35rem; margin-bottom: 0.5rem;"]
                           [
                             Vdom.Node.button
                               ~attrs:[
                                 style_string (if model.num_players = 2 
-                                  then "flex: 1; padding: 0.5rem; border: 2px solid #28a745; \
-                                        background: #28a745; color: white; border-radius: 5px; \
-                                        cursor: pointer; font-weight: bold;"
-                                  else "flex: 1; padding: 0.5rem; border: 2px solid #ccc; \
-                                        background: white; color: #333; border-radius: 5px; \
-                                        cursor: pointer;");
+                                  then "flex: 1; padding: 0.5rem; border: none; \
+                                        background: #dc3545; color: white; border-radius: 3px; \
+                                        cursor: pointer; font-size: 0.85rem;"
+                                  else "flex: 1; padding: 0.5rem; border: 1px solid #ddd; \
+                                        background: white; color: #666; border-radius: 3px; \
+                                        cursor: pointer; font-size: 0.85rem;");
                                 Vdom.Attr.on_click (fun _ -> inject (Action.SetOnlinePlayerCount 2));
                               ]
-                              [Vdom.Node.text "2 Players"];
+                              [Vdom.Node.text "2P"];
                             Vdom.Node.button
                               ~attrs:[
                                 style_string (if model.num_players = 3
-                                  then "flex: 1; padding: 0.5rem; border: 2px solid #28a745; \
-                                        background: #28a745; color: white; border-radius: 5px; \
-                                        cursor: pointer; font-weight: bold;"
-                                  else "flex: 1; padding: 0.5rem; border: 2px solid #ccc; \
-                                        background: white; color: #333; border-radius: 5px; \
-                                        cursor: pointer;");
+                                  then "flex: 1; padding: 0.5rem; border: none; \
+                                        background: #007bff; color: white; border-radius: 3px; \
+                                        cursor: pointer; font-size: 0.85rem;"
+                                  else "flex: 1; padding: 0.5rem; border: 1px solid #ddd; \
+                                        background: white; color: #666; border-radius: 3px; \
+                                        cursor: pointer; font-size: 0.85rem;");
                                 Vdom.Attr.on_click (fun _ -> inject (Action.SetOnlinePlayerCount 3));
                               ]
-                              [Vdom.Node.text "3 Players"];
+                              [Vdom.Node.text "3P"];
                             Vdom.Node.button
                               ~attrs:[
                                 style_string (if model.num_players = 4
-                                  then "flex: 1; padding: 0.5rem; border: 2px solid #28a745; \
-                                        background: #28a745; color: white; border-radius: 5px; \
-                                        cursor: pointer; font-weight: bold;"
-                                  else "flex: 1; padding: 0.5rem; border: 2px solid #ccc; \
-                                        background: white; color: #333; border-radius: 5px; \
-                                        cursor: pointer;");
+                                  then "flex: 1; padding: 0.5rem; border: none; \
+                                        background: #fd7e14; color: white; border-radius: 3px; \
+                                        cursor: pointer; font-size: 0.85rem;"
+                                  else "flex: 1; padding: 0.5rem; border: 1px solid #ddd; \
+                                        background: white; color: #666; border-radius: 3px; \
+                                        cursor: pointer; font-size: 0.85rem;");
                                 Vdom.Attr.on_click (fun _ -> inject (Action.SetOnlinePlayerCount 4));
                               ]
-                              [Vdom.Node.text "4 Players"];
+                              [Vdom.Node.text "4P"];
                           ];
                         Vdom.Node.button
                           ~attrs:[
-                            style_string "background: #28a745; color: white; border: none; \
-                                         border-radius: 5px; padding: 0.75rem 1.5rem; \
-                                         cursor: pointer; font-weight: bold; width: 100%;";
+                            style_string "background: #1a1a1a; color: white; border: none; \
+                                         border-radius: 3px; padding: 0.6rem; \
+                                         cursor: pointer; font-size: 0.85rem; width: 100%;";
                             Vdom.Attr.on_click (fun _ -> inject (Action.CreateOnlineGame));
                           ]
                           [Vdom.Node.text (Printf.sprintf "Create %d-Player Game" model.num_players)];
                         (match model.game_id with
                         | Some gid ->
                             Vdom.Node.div
-                              ~attrs:[style_string "margin-top: 1rem; padding: 0.75rem; \
-                                                    background: #d4edda; border-radius: 5px;"]
+                              ~attrs:[style_string "margin-top: 0.75rem; padding: 0.6rem; \
+                                                    background: #f5f5f5; border-radius: 3px;"]
                               [
                                 Vdom.Node.p
-                                  ~attrs:[style_string "margin: 0 0 0.5rem 0; font-weight: bold;"]
-                                  [Vdom.Node.text "Game ID (share this with your opponent):"];
+                                  ~attrs:[style_string "margin: 0 0 0.25rem 0; font-size: 0.75rem; color: #666;"]
+                                  [Vdom.Node.text "Game Code:"];
                                 Vdom.Node.p
                                   ~attrs:[style_string "margin: 0; font-family: monospace; \
-                                                        font-size: 1.2rem; color: #155724; \
-                                                        word-break: break-all;"]
+                                                        font-size: 0.95rem; color: #1a1a1a; \
+                                                        word-break: break-all; font-weight: 500;"]
                                   [Vdom.Node.text gid];
                               ]
                         | None -> Vdom.Node.none);
@@ -1894,32 +1944,33 @@ let component =
                     END Quick Match Section - DISABLED *)
                     (* Join Game Section *)
                     Vdom.Node.div
-                      ~attrs:[style_string "padding: 1rem; background: white; border-radius: 8px;"]
+                      ~attrs:[style_string "margin-top: 0.5rem;"]
                       [
-                        Vdom.Node.h4
-                          ~attrs:[style_string "margin-top: 0;"]
-                          [Vdom.Node.text "Join Existing Game"];
                         Vdom.Node.p
-                          ~attrs:[style_string "color: #666; font-size: 0.9rem;"]
-                          [Vdom.Node.text "Enter a game ID to join an existing game."];
-                        Vdom.Node.input
-                          ~attrs:[
-                            style_string "width: 100%; padding: 0.75rem; border: 2px solid #667eea; \
-                                         border-radius: 5px; font-size: 1rem; margin-bottom: 0.75rem;";
-                            Vdom.Attr.type_ "text";
-                            Vdom.Attr.placeholder "Enter Game ID";
-                            Vdom.Attr.value model.join_game_id_input;
-                            Vdom.Attr.on_input (fun _ s -> inject (Action.UpdateJoinGameId s));
-                          ]
-                          ();
-                        Vdom.Node.button
-                          ~attrs:[
-                            style_string "background: #667eea; color: white; border: none; \
-                                         border-radius: 5px; padding: 0.75rem 1.5rem; \
-                                         cursor: pointer; font-weight: bold; width: 100%;";
-                            Vdom.Attr.on_click (fun _ -> inject (Action.JoinOnlineGame));
-                          ]
-                          [Vdom.Node.text "Join Game"];
+                          ~attrs:[style_string "margin: 0 0 0.5rem 0; color: #666; font-size: 0.8rem;"]
+                          [Vdom.Node.text "Or join with a game code"];
+                        Vdom.Node.div
+                          ~attrs:[style_string "display: flex; gap: 0.35rem;"]
+                          [
+                            Vdom.Node.input
+                              ~attrs:[
+                                style_string "flex: 1; padding: 0.6rem; border: 1px solid #ddd; \
+                                             border-radius: 3px; font-size: 0.9rem;";
+                                Vdom.Attr.type_ "text";
+                                Vdom.Attr.placeholder "Paste game code";
+                                Vdom.Attr.value model.join_game_id_input;
+                                Vdom.Attr.on_input (fun _ s -> inject (Action.UpdateJoinGameId s));
+                              ]
+                              ();
+                            Vdom.Node.button
+                              ~attrs:[
+                                style_string "background: #1a1a1a; color: white; border: none; \
+                                             border-radius: 3px; padding: 0.6rem 1rem; \
+                                             cursor: pointer; font-size: 0.85rem;";
+                                Vdom.Attr.on_click (fun _ -> inject (Action.JoinOnlineGame));
+                              ]
+                              [Vdom.Node.text "Join"];
+                          ];
                       ];
                   ];
               ];
@@ -1940,62 +1991,67 @@ let component =
         | _ -> true  (* Not in multiplayer or player_index not set - show controls *)
       in
       
+      (* Minimalistic dark theme matching the menu *)
       let container_style = "display: flex; flex-direction: column; align-items: center; \
-                             padding: 1.25rem; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); \
-                             min-height: 100vh;"
+                             padding: 1.5rem; background: #1a1a1a; min-height: 100vh;"
       in
-      let game_container_style = "background: white; border-radius: 15px; padding: 1.875rem; \
-                                   max-width: 1200px; width: 100%;"
+      let game_container_style = "background: #fafafa; border-radius: 4px; padding: 1.5rem; \
+                                   max-width: 1200px; width: 100%; box-shadow: 0 4px 20px rgba(0,0,0,0.3);"
       in
-      let title_style = "text-align: center; color: #333; margin-bottom: 1.875rem; font-size: 2.5rem;"
+      let title_style = "text-align: center; color: #1a1a1a; margin-bottom: 1rem; font-size: 2rem; \
+                         font-weight: 300; letter-spacing: 0.2rem;"
       in
       
+      (* Compact game info bar *)
       let game_info = Vdom.Node.div
-        ~attrs:[style_string "display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; \
-                              margin-bottom: 1.875rem; "]
+        ~attrs:[style_string "display: flex; justify-content: space-between; align-items: center; \
+                              margin-bottom: 1rem; padding: 0.75rem 1rem; background: #f5f5f5; \
+                              border-radius: 4px; flex-wrap: wrap; gap: 0.5rem;"]
         [
           Vdom.Node.div
-            ~attrs:[style_string "background: #f8f9fa; padding: 1.25rem; border-radius: 10px; \
-                                  border-left: 4px solid #667eea;"]
+            ~attrs:[style_string "display: flex; gap: 1.5rem; align-items: center;"]
             [
-              Vdom.Node.h3 ~attrs:[] [Vdom.Node.text "Game Status"];
-              Vdom.Node.p ~attrs:[] [Vdom.Node.text (Printf.sprintf "Phase: %s" 
-                (if is_game_over then "Game Over" else "In Progress"))];
-              Vdom.Node.p ~attrs:[] [Vdom.Node.text (Printf.sprintf "Turn: %s" current_player.name)];
-              Vdom.Node.p ~attrs:[] [Vdom.Node.text (Printf.sprintf "Deck: %d tiles remaining" 
-                (List.length state.deck))];
+              Vdom.Node.span
+                ~attrs:[style_string "font-size: 0.85rem; color: #666;"]
+                [Vdom.Node.text (Printf.sprintf "Turn: ");
+                 Vdom.Node.span 
+                   ~attrs:[style_string "font-weight: 500; color: #dc3545;"]
+                   [Vdom.Node.text current_player.name]];
+              Vdom.Node.span
+                ~attrs:[style_string "font-size: 0.85rem; color: #666;"]
+                [Vdom.Node.text (Printf.sprintf "Deck: %d" (List.length state.deck))];
+              Vdom.Node.span
+                ~attrs:[style_string (Printf.sprintf "font-size: 0.85rem; color: %s; font-weight: 500;"
+                  (if is_game_over then "#dc3545" else "#28a745"))]
+                [Vdom.Node.text (if is_game_over then "Game Over" else "In Progress")];
             ];
           Vdom.Node.div
-            ~attrs:[style_string "background: #f8f9fa; padding: 1.25rem; border-radius: 10px; \
-                                  border-left: 4px solid #667eea;"]
-            [
-              Vdom.Node.h3 ~attrs:[] [Vdom.Node.text "Rules"];
-              Vdom.Node.p ~attrs:[] [Vdom.Node.text "• First play must total 30+ points"];
-              Vdom.Node.p ~attrs:[] [Vdom.Node.text "• Form groups (same rank) or runs (same color)"];
-              Vdom.Node.p ~attrs:[] [Vdom.Node.text "• Use jokers as wild cards"];
-            ];
+            ~attrs:[style_string "font-size: 0.75rem; color: #999;"]
+            [Vdom.Node.text "30+ pts first • Groups or runs • Jokers wild"];
         ] in
       
       let board = Vdom.Node.div
-        ~attrs:[style_string "background: #e9ecef; border-radius: 10px; padding: 1.25rem; \
-                              margin-bottom: 1.875rem; min-height: 100px; border: 2px dashed #6c757d;"]
+        ~attrs:[style_string "background: #2d2d2d; border-radius: 4px; padding: 1rem; \
+                              margin-bottom: 1rem; min-height: 80px;"]
         [
           Vdom.Node.h3
-            ~attrs:[style_string "text-align: center; color: #6c757d; font-size: 1.2rem; \
-                                  margin-bottom: 0.9375rem;"]
-            [Vdom.Node.text (if model.rearrange_mode then "Rearrange Mode - Drag & Drop Tiles" else "Table")];
+            ~attrs:[style_string "text-align: left; color: #888; font-size: 0.75rem; \
+                                  margin-bottom: 0.75rem; font-weight: 500; text-transform: uppercase; \
+                                  letter-spacing: 0.1rem;"]
+            [Vdom.Node.text (if model.rearrange_mode then "⚙ Rearrange Mode" else "TABLE")];
           (if model.rearrange_mode then
             Vdom.Node.div
               ~attrs:[]
               [
                 Vdom.Node.p
-                  ~attrs:[style_string "color: #6c757d; margin-bottom: 10px; font-style: italic;"]
+                  ~attrs:[style_string "color: #aaa; margin-bottom: 10px; font-size: 0.85rem;"]
                   [Vdom.Node.text "Click tiles from board below or drag from hand to add to staging area"];
                 render_staging_area ~staging_melds:model.staging_melds 
                   ~drag_over_meld:model.drag_over_meld ~inject;
                 Vdom.Node.h4
-                  ~attrs:[style_string "color: #666; margin-top: 20px; margin-bottom: 10px;"]
-                  [Vdom.Node.text "Original Board (Click tiles to add to staging)"];
+                  ~attrs:[style_string "color: #888; margin-top: 1rem; margin-bottom: 0.5rem; \
+                                        font-size: 0.75rem; text-transform: uppercase;"]
+                  [Vdom.Node.text "Original Board (Click to add)"];
                 render_board ~board:state.board ~rearrange_mode:true 
                   ~selected_board_tiles:[] ~inject;
               ]
@@ -2005,9 +2061,9 @@ let component =
         ] in
       
       let players_style = match model.num_players with
-        | 2 -> "display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem;"
-        | 3 -> "display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1.25rem;"
-        | _ -> "display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 1.25rem;"
+        | 2 -> "display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;"
+        | 3 -> "display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.75rem;"
+        | _ -> "display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 0.75rem;"
       in
       
       let players = Vdom.Node.div
@@ -2035,6 +2091,7 @@ let component =
             ~player 
             ~is_current 
             ~is_winner
+            ~is_me:is_my_hand  (* Show "(You)" indicator for user's player *)
             ~selected_tiles:(if can_interact then model.selected_tiles else [])
             ~last_drawn_tile_index:(if can_interact then model.last_drawn_tile_index else None)
             ~inject:conditional_inject
@@ -2043,31 +2100,26 @@ let component =
             ~tiles_moved_from_hand:(if can_interact && model.rearrange_mode then model.tiles_moved_from_hand else [])
         ))) in
       
-      let button_style color = 
-        Printf.sprintf "background: %s; color: white; border: none; border-radius: 8px; \
-                        padding: 0.625rem 1.25rem; font-size: 1rem; font-weight: bold; \
-                        cursor: pointer; transition: all 0.2s ease;" color
-      in
-      
-      (* Show game ID if in multiplayer mode *)
+      (* Show game ID if in multiplayer mode - compact inline style *)
       let game_id_display = match model.game_id with
         | Some gid ->
             Vdom.Node.div
-              ~attrs:[style_string "margin-bottom: 1rem; padding: 0.75rem; background: #e7f3ff; \
-                                    border-radius: 8px; border: 2px solid #28a745; text-align: center;"]
+              ~attrs:[style_string "margin-bottom: 1rem; padding: 0.5rem 1rem; background: #1a1a1a; \
+                                    border-radius: 4px; display: flex; align-items: center; \
+                                    justify-content: space-between; flex-wrap: wrap; gap: 0.5rem;"]
               [
-                Vdom.Node.p
-                  ~attrs:[style_string "margin: 0 0 0.5rem 0; font-weight: bold; color: #155724;"]
-                  [Vdom.Node.text "🌐 Online Game"];
-                Vdom.Node.p
-                  ~attrs:[style_string "margin: 0; font-family: monospace; font-size: 1.1rem; \
-                                        color: #155724; word-break: break-all;"]
+                Vdom.Node.span
+                  ~attrs:[style_string "color: #28a745; font-size: 0.8rem; font-weight: 500;"]
+                  [Vdom.Node.text "ONLINE"];
+                Vdom.Node.span
+                  ~attrs:[style_string "font-family: monospace; font-size: 0.85rem; \
+                                        color: #fff; word-break: break-all;"]
                   [Vdom.Node.text gid];
                 (match model.player_index with
                 | Some idx ->
-                    Vdom.Node.p
-                      ~attrs:[style_string "margin: 0.5rem 0 0 0; font-size: 0.9rem; color: #666;"]
-                      [Vdom.Node.text (Printf.sprintf "You are: %s" state.players.(idx).State.name)]
+                    Vdom.Node.span
+                      ~attrs:[style_string "font-size: 0.8rem; color: #007bff;"]
+                      [Vdom.Node.text (Printf.sprintf "You: %s" state.players.(idx).State.name)]
                 | None -> Vdom.Node.none);
               ]
         | None -> Vdom.Node.none
@@ -2077,48 +2129,54 @@ let component =
       let waiting_message = match model.player_index, model.game_id with
         | Some player_idx, Some _ when state.turn <> player_idx && not is_game_over ->
             Vdom.Node.div
-              ~attrs:[style_string "margin: 1rem 0; padding: 1rem; background: #fff3cd; \
-                                    border-radius: 8px; border: 2px solid #ffc107; text-align: center;"]
+              ~attrs:[style_string "margin: 0.75rem 0; padding: 0.75rem; background: #fd7e14; \
+                                    border-radius: 4px; text-align: center;"]
               [
                 Vdom.Node.p
-                  ~attrs:[style_string "margin: 0; font-size: 1.1rem; font-weight: bold; color: #856404;"]
-                  [Vdom.Node.text (Printf.sprintf "⏳ Waiting for %s's turn..." current_player.name)];
+                  ~attrs:[style_string "margin: 0; font-size: 0.95rem; font-weight: 500; color: white;"]
+                  [Vdom.Node.text (Printf.sprintf "Waiting for %s..." current_player.name)];
               ]
         | _ -> Vdom.Node.none
       in
       
+      (* Minimalistic button style *)
+      let btn_style color = 
+        Printf.sprintf "background: %s; color: white; border: none; border-radius: 3px; \
+                        padding: 0.6rem 1.25rem; font-size: 0.9rem; font-weight: 500; \
+                        cursor: pointer; transition: opacity 0.2s ease; letter-spacing: 0.03rem;" color
+      in
       let controls = if not is_game_over && is_my_turn then
         if model.rearrange_mode then
           (* Rearrange mode controls *)
           Vdom.Node.div
-            ~attrs:[style_string "display: flex; gap: 0.625rem; justify-content: center; \
-                                  margin-top: 1.25rem; flex-wrap: wrap;"]
+            ~attrs:[style_string "display: flex; gap: 0.5rem; justify-content: center; \
+                                  margin-top: 1rem; flex-wrap: wrap;"]
             [
               Vdom.Node.button
                 ~attrs:(
                   let base_attrs = [
-                    style_string (button_style "#667eea");
+                    style_string (btn_style "#007bff");
                     Vdom.Attr.on_click (fun _ -> inject AddToNewMeld);
                   ] in
                   if List.is_empty model.selected_tiles then
                     Vdom.Attr.disabled :: base_attrs
                   else base_attrs
                 )
-                [Vdom.Node.text "Add to New Meld"];
+                [Vdom.Node.text "Add to Meld"];
               Vdom.Node.button
                 ~attrs:(
                   let base_attrs = [
-                    style_string (button_style "#28a745");
+                    style_string (btn_style "#28a745");
                     Vdom.Attr.on_click (fun _ -> inject SubmitRearrangement);
                   ] in
                   if List.is_empty model.staging_melds then
                     Vdom.Attr.disabled :: base_attrs
                   else base_attrs
                 )
-                [Vdom.Node.text "Submit Rearrangement"];
+                [Vdom.Node.text "Submit"];
               Vdom.Node.button
                 ~attrs:[
-                  style_string (button_style "#dc3545");
+                  style_string (btn_style "#dc3545");
                   Vdom.Attr.on_click (fun _ -> inject CancelRearrangement);
                 ]
                 [Vdom.Node.text "Cancel"];
@@ -2126,47 +2184,50 @@ let component =
         else
           (* Normal mode controls *)
           Vdom.Node.div
-            ~attrs:[style_string "display: flex; gap: 0.625rem; justify-content: center; \
-                                  margin-top: 1.25rem; flex-wrap: wrap;"]
+            ~attrs:[style_string "display: flex; gap: 0.5rem; justify-content: center; \
+                                  margin-top: 1rem; flex-wrap: wrap;"]
             [
               Vdom.Node.button
                 ~attrs:(
                   let base_attrs = [
-                    style_string (button_style "#28a745");
+                    style_string (btn_style "#28a745");
                     Vdom.Attr.on_click (fun _ -> inject PlaySelected);
                   ] in
                   if List.is_empty model.selected_tiles then
                     Vdom.Attr.disabled :: base_attrs
                   else base_attrs
                 )
-                [Vdom.Node.text "Play Selected"];
+                [Vdom.Node.text "Play"];
+              (* Show Draw only if no tiles played this turn, End Turn only if tiles were played *)
+              (if model.tiles_played_this_turn then
+                Vdom.Node.button
+                  ~attrs:[
+                    style_string (btn_style "#1a1a1a");
+                    Vdom.Attr.on_click (fun _ -> inject PassTurn);
+                  ]
+                  [Vdom.Node.text "End Turn"]
+              else
+                Vdom.Node.button
+                  ~attrs:[
+                    style_string (btn_style "#007bff");
+                    Vdom.Attr.on_click (fun _ -> inject DrawTile);
+                  ]
+                  [Vdom.Node.text "Draw"]);
               Vdom.Node.button
                 ~attrs:[
-                  style_string (button_style "#667eea");
-                  Vdom.Attr.on_click (fun _ -> inject DrawTile);
-                ]
-                [Vdom.Node.text "Draw"];
-              Vdom.Node.button
-                ~attrs:[
-                  style_string (button_style "#6c757d");
-                  Vdom.Attr.on_click (fun _ -> inject PassTurn);
-                ]
-                [Vdom.Node.text "Pass"];
-              Vdom.Node.button
-                ~attrs:[
-                  style_string (button_style "#fd7e14");
+                  style_string (btn_style "#fd7e14");
                   Vdom.Attr.on_click (fun _ -> inject ToggleRearrangeMode);
                 ]
-                [Vdom.Node.text "Rearrange Table"];
+                [Vdom.Node.text "Rearrange"];
             ]
       else
         Vdom.Node.div
-          ~attrs:[style_string "display: flex; gap: 0.625rem; justify-content: center; \
-                                margin-top: 1.25rem; flex-wrap: wrap;"]
+          ~attrs:[style_string "display: flex; gap: 0.5rem; justify-content: center; \
+                                margin-top: 1rem; flex-wrap: wrap;"]
           [
             Vdom.Node.button
               ~attrs:[
-                style_string (button_style "#667eea");
+                style_string (btn_style "#1a1a1a");
                 Vdom.Attr.on_click (fun _ -> inject NewGame);
               ]
               [Vdom.Node.text "New Game"];
@@ -2179,12 +2240,11 @@ let component =
         String.is_substring model.message ~substring:"failed"
       in
       let status_style = if is_error_message then
-        "text-align: left; margin-top: 1.25rem; padding: 0.9375rem; border-radius: 8px; \
-         border: 1px solid #f5c6cb; background: #f8d7da; color: #721c24; white-space: pre-wrap; \
-         font-weight: 500;"
+        "text-align: left; margin-top: 1rem; padding: 0.75rem; border-radius: 4px; \
+         background: #dc3545; color: white; white-space: pre-wrap; font-size: 0.9rem;"
       else
-        "text-align: center; margin-top: 1.25rem; padding: 0.9375rem; border-radius: 8px; \
-         border: 1px solid #c3e6cb; background: #d4edda; color: #155724; white-space: pre-wrap;"
+        "text-align: center; margin-top: 1rem; padding: 0.75rem; border-radius: 4px; \
+         background: #f5f5f5; color: #333; white-space: pre-wrap; font-size: 0.9rem;"
       in
       let status = Vdom.Node.div
         ~attrs:[style_string status_style]
@@ -2192,13 +2252,16 @@ let component =
       
       let victory_message = if is_game_over && Option.is_some winner then
         Vdom.Node.div
-          ~attrs:[style_string "text-align: center; margin-top: 1.25rem; padding: 1.25rem; \
-                                background: linear-gradient(45deg, #28a745 0%, #20c997 100%); \
-                                color: white; border-radius: 10px; font-size: 1.5rem; font-weight: bold;"]
+          ~attrs:[style_string "text-align: center; margin-top: 1rem; padding: 1.5rem; \
+                                background: #1a1a1a; color: white; border-radius: 4px;"]
           [
-            Vdom.Node.text "🎊 CONGRATULATIONS! 🎊";
-            Vdom.Node.br ();
-            Vdom.Node.text (Printf.sprintf "%s wins the game!" (Option.value_exn winner).State.name);
+            Vdom.Node.span
+              ~attrs:[style_string "font-size: 1.75rem; display: block; margin-bottom: 0.5rem;"]
+              [Vdom.Node.text "🏆"];
+            Vdom.Node.span
+              ~attrs:[style_string "font-size: 1.1rem; font-weight: 500; letter-spacing: 0.1rem;"]
+              [Vdom.Node.text (Printf.sprintf "%s WINS" 
+                (String.uppercase (Option.value_exn winner).State.name))];
           ]
       else
         Vdom.Node.none in
@@ -2211,7 +2274,7 @@ let component =
             [
               Vdom.Node.h1
                 ~attrs:[style_string title_style]
-                [Vdom.Node.text "🀄 Rummikub"];
+                [Vdom.Node.text "RUMMIKUB"];
               game_id_display;
               game_info;
               board;

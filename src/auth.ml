@@ -49,20 +49,59 @@ let user_of_js (js_user : 'a Js.t) : user =
     let check_fn = Js.Unsafe.eval_string "(function(x) { return x === null || x === undefined; })" in
     Js.to_bool (Js.Unsafe.fun_call check_fn [|Js.Unsafe.inject v|])
   in
+  (* Log the raw JS user object for debugging *)
+  let _ = try
+    let uid_raw = Js.Unsafe.get js_user "uid" in
+    let uid_type = Js.to_string (Js.typeof uid_raw) in
+    let uid_str = if is_null_or_undefined uid_raw then "<null/undefined>" 
+      else try Js.to_string uid_raw with _ -> "<conversion failed>" in
+    Js.Unsafe.meth_call (Js.Unsafe.get Js.Unsafe.global "console") "log" 
+      [|Js.Unsafe.inject (Js.string (Printf.sprintf "[Auth] Raw uid field - type: %s, value: %s" uid_type uid_str))|]
+  with e ->
+    Js.Unsafe.meth_call (Js.Unsafe.get Js.Unsafe.global "console") "log" 
+      [|Js.Unsafe.inject (Js.string (Printf.sprintf "[Auth] Error accessing uid: %s" (Printexc.to_string e)))|]
+  in
   let get_string field =
-    let v = Js.Unsafe.get js_user field in
+    let v = try Js.Unsafe.get js_user field with _ -> Js.Unsafe.inject (Js.string "") in
     if is_null_or_undefined v then ""
-    else try Js.to_string v with _ -> ""
+    else 
+      try 
+        let s = Js.to_string (Js.Unsafe.coerce v : Js.js_string Js.t) in
+        if String.length s > 0 then s else ""
+      with _ -> 
+        (* Try alternative: maybe it's a property that needs different access *)
+        try 
+          let toString_meth = Js.Unsafe.get v "toString" in
+          let result = Js.Unsafe.fun_call toString_meth [||] in
+          Js.to_string (Js.Unsafe.coerce result : Js.js_string Js.t)
+        with _ -> ""
   in
   let get_string_opt field =
-    let v = Js.Unsafe.get js_user field in
+    let v = try Js.Unsafe.get js_user field with _ -> Js.Unsafe.inject (Js.string "") in
     if is_null_or_undefined v then None
     else 
-      let s = try Js.to_string v with _ -> "" in
+      let s = try Js.to_string (Js.Unsafe.coerce v : Js.js_string Js.t) with _ -> "" in
       if String.length s > 0 then Some s else None
   in
+  (* Try multiple ways to get uid *)
+  let uid = 
+    let uid1 = get_string "uid" in
+    if String.length uid1 > 0 then uid1
+    else
+      (* Try accessing via method call if it's a method *)
+      try
+        let uid_meth = Js.Unsafe.get js_user "uid" in
+        if Js.to_string (Js.typeof uid_meth) = "function" then
+          let result = Js.Unsafe.fun_call uid_meth [||] in
+          Js.to_string (Js.Unsafe.coerce result : Js.js_string Js.t)
+        else ""
+      with _ -> ""
+  in
+  (* Log the final extracted user ID *)
+  let _ = Js.Unsafe.meth_call (Js.Unsafe.get Js.Unsafe.global "console") "log" 
+    [|Js.Unsafe.inject (Js.string (Printf.sprintf "[Auth] Final User ID extracted: '%s' (length: %d)" uid (String.length uid)))|] in
   {
-    uid = get_string "uid";
+    uid;
     email = get_string_opt "email";
     display_name = get_string_opt "displayName";
     photo_url = get_string_opt "photoURL";
@@ -117,7 +156,25 @@ let sign_in_with_email (email : string) (password : string) (on_success : user -
     Js.Unsafe.inject (Js.string email);
     Js.Unsafe.inject (Js.string password)
   |] in
-  let success_cb = Js.wrap_callback (fun js_user ->
+  let success_cb = Js.wrap_callback (fun result ->
+    (* Log the result type for debugging *)
+    let result_type = Js.to_string (Js.typeof result) in
+    let _ = Js.Unsafe.meth_call (Js.Unsafe.get Js.Unsafe.global "console") "log" 
+      [|Js.Unsafe.inject (Js.string (Printf.sprintf "[sign_in_with_email] Result type: %s" result_type))|] in
+    (* In Firebase compat mode, signInWithEmailAndPassword returns a UserCredential with a 'user' property *)
+    (* But it might also return the user directly - try both *)
+    let js_user = try 
+      (* Try to get user from credential object *)
+      let user_from_cred = Js.Unsafe.get result "user" in
+      let _ = Js.Unsafe.meth_call (Js.Unsafe.get Js.Unsafe.global "console") "log" 
+        [|Js.Unsafe.inject (Js.string "[sign_in_with_email] Found 'user' property in result")|] in
+      user_from_cred
+    with _ ->
+      (* If that fails, assume result is the user directly *)
+      let _ = Js.Unsafe.meth_call (Js.Unsafe.get Js.Unsafe.global "console") "log" 
+        [|Js.Unsafe.inject (Js.string "[sign_in_with_email] Using result as user directly")|] in
+      result
+    in
     on_success (user_of_js js_user)
   ) in
   let error_cb = Js.wrap_callback (fun err ->
@@ -133,7 +190,25 @@ let create_user_with_email (email : string) (password : string) (on_success : us
     Js.Unsafe.inject (Js.string email);
     Js.Unsafe.inject (Js.string password)
   |] in
-  let success_cb = Js.wrap_callback (fun js_user ->
+  let success_cb = Js.wrap_callback (fun result ->
+    (* Log the result type for debugging *)
+    let result_type = Js.to_string (Js.typeof result) in
+    let _ = Js.Unsafe.meth_call (Js.Unsafe.get Js.Unsafe.global "console") "log" 
+      [|Js.Unsafe.inject (Js.string (Printf.sprintf "[create_user_with_email] Result type: %s" result_type))|] in
+    (* In Firebase compat mode, createUserWithEmailAndPassword returns a UserCredential with a 'user' property *)
+    (* But it might also return the user directly - try both *)
+    let js_user = try 
+      (* Try to get user from credential object *)
+      let user_from_cred = Js.Unsafe.get result "user" in
+      let _ = Js.Unsafe.meth_call (Js.Unsafe.get Js.Unsafe.global "console") "log" 
+        [|Js.Unsafe.inject (Js.string "[create_user_with_email] Found 'user' property in result")|] in
+      user_from_cred
+    with _ ->
+      (* If that fails, assume result is the user directly *)
+      let _ = Js.Unsafe.meth_call (Js.Unsafe.get Js.Unsafe.global "console") "log" 
+        [|Js.Unsafe.inject (Js.string "[create_user_with_email] Using result as user directly")|] in
+      result
+    in
     on_success (user_of_js js_user)
   ) in
   let error_cb = Js.wrap_callback (fun err ->

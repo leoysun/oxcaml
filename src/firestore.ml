@@ -169,75 +169,162 @@ let is_empty_slot v =
   let check_fn = Js.Unsafe.eval_string "(function(x) { return x === null || x === undefined || typeof x !== 'string' || x === ''; })" in
   Js.to_bool (Js.Unsafe.fun_call check_fn [|Js.Unsafe.inject v|])
 
-(* Join an existing game - finds first available player slot *)
+(* Helper to log to console *)
+let console_log msg =
+  let _ = Js.Unsafe.meth_call (Js.Unsafe.get Js.Unsafe.global "console") "log" 
+    [|Js.Unsafe.inject (Js.string msg)|] in ()
+
+(* Join an existing game using a TRANSACTION to prevent race conditions *)
+(* This ensures that if two players try to join at the same time, they get different slots *)
 let join_game (game_id : string) (user_id : string) (on_success : State.t -> int -> unit) (on_error : string -> unit) : unit =
+  console_log (Printf.sprintf "[Firestore.join_game] Starting join for user_id=%s, game_id=%s" user_id game_id);
   let db = get_firestore () in
   let doc_ref = doc db "games" game_id in
-  get_doc doc_ref
-    (fun snapshot ->
-      match snapshot_data snapshot with
-      | Some data ->
-          let player_ids = try Some (Js.Unsafe.get data "player_ids") with _ -> None in
-          let status = try Some (Js.Unsafe.get data "status" |> Js.to_string) with _ -> None in
-          
-          (match player_ids, status with
-           | Some ids, Some s when String.equal s "waiting" ->
-               let ids_array = Js.to_array ids in
-               let num_players = Array.length ids_array in
-               
-               (* Find first empty slot *)
-               let empty_slot = ref None in
-               for i = 0 to num_players - 1 do
-                 if Option.is_none !empty_slot && is_empty_slot (Array.get ids_array i) then
-                   empty_slot := Some i
-               done;
-               
-               (match !empty_slot with
-                | Some slot_idx ->
-                    (* Fill the empty slot with the user ID *)
-                    Array.set ids_array slot_idx (Js.Unsafe.inject (Js.string user_id));
-                    let new_ids = Js.array ids_array in
-                    
-                    (* Check if all slots are now filled *)
-                    let all_filled = ref true in
-                    for i = 0 to num_players - 1 do
-                      if is_empty_slot (Array.get ids_array i) then
-                        all_filled := false
-                    done;
-                    let new_status = if !all_filled then "playing" else "waiting" in
-                    
-                    (* Update the document *)
-                    let update_data = Js.Unsafe.obj [||] in
-                    Js.Unsafe.set update_data (Js.string "player_ids") new_ids;
-                    Js.Unsafe.set update_data (Js.string "status") (Js.string new_status);
-                    
-                    let promise = Js.Unsafe.meth_call doc_ref "update" [|update_data|] in
-                    let success_cb = Js.wrap_callback (fun _ ->
-                      match state_of_firestore data with
-                      | Some state -> on_success state slot_idx
-                      | None -> on_error "Failed to parse game state"
-                    ) in
-                    let error_cb = Js.wrap_callback (fun err ->
-                      let msg = Js.Unsafe.get err "message" |> Js.to_string in
-                      on_error msg
-                    ) in
-                    ignore (Js.Unsafe.meth_call promise "then" [|Js.Unsafe.inject success_cb|]);
-                    ignore (Js.Unsafe.meth_call promise "catch" [|Js.Unsafe.inject error_cb|])
-                | None ->
-                    on_error "Game is full - no empty slots available")
-           | Some _, Some s when String.equal s "playing" ->
-               on_error "Game is already full"
-           | None, _ ->
-               (* Legacy game without player_ids - allow joining as player 1 *)
-               (match state_of_firestore data with
-                | Some state -> on_success state 1
-                | None -> on_error "Failed to parse game state")
-           | _, None ->
-               on_error "Game not found or invalid status"
-           | Some _, Some _ ->
-               on_error "Game has an unexpected status")
-      | None -> on_error "Game not found")
-    on_error
+  
+  (* Use runTransaction for atomic read-modify-write *)
+  let transaction_fn = Js.wrap_callback (fun transaction ->
+    (* Get the document within the transaction *)
+    let get_promise = Js.Unsafe.meth_call transaction "get" [|Js.Unsafe.inject doc_ref|] in
+    
+    let then_cb = Js.wrap_callback (fun snapshot ->
+      (* Check if document exists *)
+      let exists_val = Js.Unsafe.get snapshot "exists" in
+      let exists_bool =
+        if Js.to_string (Js.typeof exists_val) = "function" then
+          Js.to_bool (Js.Unsafe.meth_call snapshot "exists" [||])
+        else
+          Js.to_bool exists_val
+      in
+      
+      if not exists_bool then
+        (* Return rejected promise *)
+        Js.Unsafe.meth_call (Js.Unsafe.get Js.Unsafe.global "Promise") "reject"
+          [|Js.Unsafe.inject (Js.string "Game not found")|]
+      else
+        let data = Js.Unsafe.meth_call snapshot "data" [||] in
+        let player_ids = try Some (Js.Unsafe.get data "player_ids") with _ -> None in
+        let status = try Some (Js.Unsafe.get data "status" |> Js.to_string) with _ -> None in
+        
+        let result_promise = match player_ids, status with
+        | Some ids, Some s when String.equal s "waiting" ->
+            let ids_array = Js.to_array ids in
+            let num_players = Array.length ids_array in
+            
+            (* Log current player_ids array *)
+            let slot_strings = ref [] in
+            for i = 0 to num_players - 1 do
+              let slot_val = Array.get ids_array i in
+              let slot_str = if is_empty_slot slot_val then "<empty>" 
+                else try Js.to_string (Js.Unsafe.coerce slot_val) with _ -> "<error>" in
+              slot_strings := (Printf.sprintf "slot[%d]=%s" i slot_str) :: !slot_strings
+            done;
+            let current_players = Stdlib.String.concat ", " (List.rev !slot_strings) in
+            console_log (Printf.sprintf "[Firestore.join_game] Current players: [%s]" current_players);
+            
+            (* Check if user is already in the game *)
+            let already_in_game = ref false in
+            let existing_slot = ref (-1) in
+            for i = 0 to num_players - 1 do
+              let slot_val = Array.get ids_array i in
+              if not (is_empty_slot slot_val) then begin
+                let slot_str = try Js.to_string (Js.Unsafe.coerce slot_val) with _ -> "" in
+                if String.equal slot_str user_id then begin
+                  already_in_game := true;
+                  existing_slot := i
+                end
+              end
+            done;
+            
+            if !already_in_game then begin
+              console_log (Printf.sprintf "[Firestore.join_game] User %s already in slot %d" user_id !existing_slot);
+              Js.Unsafe.meth_call (Js.Unsafe.get Js.Unsafe.global "Promise") "reject"
+                [|Js.Unsafe.inject (Js.string "You are already in this game")|]
+            end
+            else begin
+              (* Find first empty slot *)
+              let empty_slot = ref None in
+              for i = 0 to num_players - 1 do
+                if Option.is_none !empty_slot && is_empty_slot (Array.get ids_array i) then
+                  empty_slot := Some i
+              done;
+              
+              match !empty_slot with
+              | Some slot_idx ->
+                  console_log (Printf.sprintf "[Firestore.join_game] Assigning user %s to slot %d" user_id slot_idx);
+                  (* Fill the empty slot with the user ID *)
+                  Array.set ids_array slot_idx (Js.Unsafe.inject (Js.string user_id));
+                  let new_ids = Js.array ids_array in
+                  
+                  (* Check if all slots are now filled *)
+                  let all_filled = ref true in
+                  for i = 0 to num_players - 1 do
+                    if is_empty_slot (Array.get ids_array i) then
+                      all_filled := false
+                  done;
+                  let new_status = if !all_filled then "playing" else "waiting" in
+                  console_log (Printf.sprintf "[Firestore.join_game] New status: %s, all_filled: %b" new_status !all_filled);
+                  
+                  (* Update the document within the transaction *)
+                  let update_data = Js.Unsafe.obj [||] in
+                  Js.Unsafe.set update_data (Js.string "player_ids") new_ids;
+                  Js.Unsafe.set update_data (Js.string "status") (Js.string new_status);
+                  
+                  ignore (Js.Unsafe.meth_call transaction "update" [|Js.Unsafe.inject doc_ref; Js.Unsafe.inject update_data|]);
+                  
+                  (* Return the slot index and data for the success callback *)
+                  let result = Js.Unsafe.obj [||] in
+                  Js.Unsafe.set result (Js.string "slot_idx") (Js.number_of_float (Float.of_int slot_idx));
+                  Js.Unsafe.set result (Js.string "data") data;
+                  Js.Unsafe.meth_call (Js.Unsafe.get Js.Unsafe.global "Promise") "resolve" [|Js.Unsafe.inject result|]
+              | None ->
+                  console_log "[Firestore.join_game] No empty slots available";
+                  Js.Unsafe.meth_call (Js.Unsafe.get Js.Unsafe.global "Promise") "reject"
+                    [|Js.Unsafe.inject (Js.string "Game is full - no empty slots available")|]
+            end
+        | Some _, Some s when String.equal s "playing" ->
+            Js.Unsafe.meth_call (Js.Unsafe.get Js.Unsafe.global "Promise") "reject"
+              [|Js.Unsafe.inject (Js.string "Game is already in progress")|]
+        | None, _ ->
+            (* Legacy game without player_ids - reject *)
+            Js.Unsafe.meth_call (Js.Unsafe.get Js.Unsafe.global "Promise") "reject"
+              [|Js.Unsafe.inject (Js.string "Invalid game format")|]
+        | _, None ->
+            Js.Unsafe.meth_call (Js.Unsafe.get Js.Unsafe.global "Promise") "reject"
+              [|Js.Unsafe.inject (Js.string "Game not found or invalid status")|]
+        | Some _, Some _ ->
+            Js.Unsafe.meth_call (Js.Unsafe.get Js.Unsafe.global "Promise") "reject"
+              [|Js.Unsafe.inject (Js.string "Game has an unexpected status")|]
+        in
+        result_promise
+    ) in
+    
+    (* Return the promise chain *)
+    Js.Unsafe.meth_call get_promise "then" [|Js.Unsafe.inject then_cb|]
+  ) in
+  
+  (* Run the transaction *)
+  let transaction_promise = Js.Unsafe.meth_call db "runTransaction" [|Js.Unsafe.inject transaction_fn|] in
+  
+  let success_cb = Js.wrap_callback (fun result ->
+    let slot_idx = Js.Unsafe.get result "slot_idx" |> Js.float_of_number |> Int.of_float in
+    let data = Js.Unsafe.get result "data" in
+    match state_of_firestore data with
+    | Some state -> on_success state slot_idx
+    | None -> on_error "Failed to parse game state"
+  ) in
+  
+  let error_cb = Js.wrap_callback (fun err ->
+    let msg = try Js.Unsafe.get err "message" |> Js.to_string with _ -> 
+      try Js.to_string err with _ -> "Unknown error joining game"
+    in
+    let code = try Some (Js.Unsafe.get err "code" |> Js.to_string) with _ -> None in
+    console_log (Printf.sprintf "[Firestore.join_game] ERROR: %s (code: %s)" 
+      msg (Option.value code ~default:"none"));
+    on_error msg
+  ) in
+  
+  ignore (Js.Unsafe.meth_call transaction_promise "then" [|Js.Unsafe.inject success_cb|]);
+  ignore (Js.Unsafe.meth_call transaction_promise "catch" [|Js.Unsafe.inject error_cb|])
 
 (* Matchmaking: Add player to queue and try to match with players for the same game size *)
 (* num_players: 2, 3, or 4 *)
