@@ -295,7 +295,7 @@ let render_draggable_hand ~hand ~selected_tiles ~inject ~tiles_moved_from_hand =
           [Vdom.Node.text tile_text]
       ))
 
-let render_hand ~hand ~selected_tiles ~last_drawn_tile_index ~inject ~is_current ~hide_tiles ~tiles_moved_from_hand =
+let render_hand ~hand ~selected_tiles ~last_drawn_tile_index ~inject ~is_current:_ ~hide_tiles ~tiles_moved_from_hand =
   let tiles = tiles_from_hand hand in
   let tiles_moved : Rummikub.Tile.tile list = Obj.magic tiles_moved_from_hand in
   (* Filter out tiles that have been moved to staging during rearrange *)
@@ -323,7 +323,8 @@ let render_hand ~hand ~selected_tiles ~last_drawn_tile_index ~inject ~is_current
                             min-height: 50px; color: #28a745; font-weight: bold; \
                             font-size: 1.2rem; margin-top: 0.625rem;"]
       [Vdom.Node.text "🎉 EMPTY HAND! 🎉"]
-  else if hide_tiles && not is_current then
+  else if hide_tiles then
+    (* Show face-down tiles for hidden hands *)
     Vdom.Node.div
       ~attrs:[style_string "display: flex; flex-wrap: wrap; gap: 5px; margin-top: 0.625rem;"]
       (List.init (List.length filtered_tiles) ~f:(fun _ ->
@@ -1932,9 +1933,6 @@ let component =
       let is_game_over = Rummikub.Rules.is_game_over state in
       let winner = Rummikub.Rules.get_winner state in
       let current_player = state.players.(state.turn) in
-      (* In all game modes, only show the current player's tiles face-up *)
-      (* Always hide tiles for non-current players when a game is active *)
-      let hide_tiles = true in
       (* In multiplayer mode, check if it's this player's turn *)
       let is_my_turn = match model.player_index, model.game_id with
         | Some player_idx, Some _ -> state.turn = player_idx
@@ -2017,7 +2015,15 @@ let component =
           let is_current = state.turn = idx in
           let is_winner = Option.is_some winner && 
             String.equal (Option.value_exn winner).name player.name in
-          (* In multiplayer, only allow interaction if it's this player's turn *)
+          (* Determine if this player's hand should be visible:
+             - In multiplayer (game_id is Some): only show YOUR hand (player_index)
+             - In pass-and-play/local: only show current player's hand *)
+          let is_my_hand = match model.player_index, model.game_id with
+            | Some player_idx, Some _ -> idx = player_idx  (* Multiplayer: only your hand *)
+            | _ -> is_current  (* Local: current player's hand *)
+          in
+          let hide_this_player_tiles = not is_my_hand in
+          (* In multiplayer, only allow interaction if it's this player's turn AND it's your hand *)
           let can_interact = match model.player_index, model.game_id with
             | Some player_idx, Some _ -> idx = player_idx && is_current
             | _ -> is_current  (* Not in multiplayer - allow interaction for current player *)
@@ -2031,7 +2037,7 @@ let component =
             ~selected_tiles:(if can_interact then model.selected_tiles else [])
             ~last_drawn_tile_index:(if can_interact then model.last_drawn_tile_index else None)
             ~inject:conditional_inject
-            ~hide_tiles
+            ~hide_tiles:hide_this_player_tiles
             ~rearrange_mode:model.rearrange_mode
             ~tiles_moved_from_hand:(if can_interact && model.rearrange_mode then model.tiles_moved_from_hand else [])
         ))) in

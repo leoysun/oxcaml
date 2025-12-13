@@ -107,7 +107,8 @@ let save_game_state (game_id : string) (state : State.t) (on_success : unit -> u
   let db = get_firestore () in
   let doc_ref = doc db "games" game_id in
   let data = state_to_firestore state in
-  set_doc doc_ref data on_success on_error
+  (* Use update_doc instead of set_doc to preserve player_ids and status fields *)
+  update_doc doc_ref data on_success on_error
 
 let load_game_state (game_id : string) (on_success : State.t option -> unit) (on_error : string -> unit) : unit =
   let db = get_firestore () in

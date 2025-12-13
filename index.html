@@ -7,11 +7,29 @@
     <meta name="description" content="Rummikub game - Play online!">
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
     <link rel="icon" href="data:,">
+    <!-- Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
     <script defer src="generated_js/rummikub_app.bc.js"></script>
 </head>
 
 <body>
     <div id="app"></div>
+    <script>
+        // Firebase config - replace with your Firebase project config
+        // This should be set before the OCaml app initializes Firebase
+        // Firebase config for ocaml-rummikub project
+        window.firebaseConfig = {
+            apiKey: "AIzaSyD6NmMZB7-IW6WNTd5dyDqCNb0huNcqfMc",
+            authDomain: "ocaml-rummikub.firebaseapp.com",
+            projectId: "ocaml-rummikub",
+            storageBucket: "ocaml-rummikub.firebasestorage.app",
+            messagingSenderId: "73977024706",
+            appId: "1:73977024706:web:9f2d02e286af0bb6a4eb5b",
+            measurementId: "G-N82Q2F5TGP"
+        };
+    </script>
 </body>
 
 </html>
