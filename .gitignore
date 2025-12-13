@@ -9,6 +9,9 @@
 *.cmxa
 
 node_modules/
+test-results/
+playwright-report/
+playwright/.cache/
 
 # ocamlbuild working directory
 _build/
@@ -31,3 +34,8 @@ setup.log
 _opam/
 
 *.merlin
+
+# Note: firebase-config.js is NOT gitignored because:
+# 1. Firebase web API keys are designed to be public (security comes from Firebase Rules)
+# 2. GitHub Pages needs the file to be committed for deployment
+# See firebase-config.example.js for the template structure

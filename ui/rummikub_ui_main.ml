@@ -64,6 +64,7 @@ module Model = struct
     show_multiplayer_ui : bool;  (* Whether to show multiplayer create/join UI *)
     in_matchmaking : bool;  (* Whether currently searching for a match *)
     matchmaking_unsubscribe : (unit -> unit) option;  (* Unsubscribe function for matchmaking queue listener *)
+    show_return_to_menu_confirm : bool;  (* Whether to show return to menu confirmation *)
   }
   
   let equal _t1 _t2 = false
@@ -116,6 +117,9 @@ module Action = struct
     | ToggleMultiplayerUI
     | AuthStateChangedSignedIn of string
     | AuthStateChangedSignedOut
+    | RequestReturnToMenu
+    | ConfirmReturnToMenu
+    | CancelReturnToMenu
   [@@deriving sexp_of]
 end
 
@@ -239,7 +243,7 @@ let get_game_state (game_state_opt : 'a option) : Rummikub.State.t option =
   | None -> None
   | Some s -> Some (Obj.magic s : Rummikub.State.t)
 
-let render_draggable_hand ~hand ~selected_tiles ~inject ~tiles_moved_from_hand =
+let render_draggable_hand ~hand ~selected_tiles ~inject ~tiles_moved_from_hand ~is_winner =
   let tiles = tiles_from_hand hand in
   let tiles_moved : Rummikub.Tile.tile list = Obj.magic tiles_moved_from_hand in
   (* Filter out tiles that have been moved to staging during rearrange *)
@@ -264,7 +268,7 @@ let render_draggable_hand ~hand ~selected_tiles ~inject ~tiles_moved_from_hand =
       ~attrs:[style_string "display: flex; justify-content: center; align-items: center; \
                             min-height: 50px; color: #28a745; font-weight: bold; \
                             font-size: 1.2rem; margin-top: 0.625rem;"]
-      [Vdom.Node.text "🎉 EMPTY HAND! 🎉"]
+      [Vdom.Node.text (if is_winner then "RUMMIKUB!" else "🎉 EMPTY HAND! 🎉")]
   else
     Vdom.Node.div
       ~attrs:[style_string "display: flex; flex-wrap: wrap; gap: 5px; margin-top: 0.625rem;"]
@@ -296,7 +300,7 @@ let render_draggable_hand ~hand ~selected_tiles ~inject ~tiles_moved_from_hand =
           [Vdom.Node.text tile_text]
       ))
 
-let render_hand ~hand ~selected_tiles ~last_drawn_tile_index ~inject ~is_current:_ ~hide_tiles ~tiles_moved_from_hand =
+let render_hand ~hand ~selected_tiles ~last_drawn_tile_index ~inject ~is_current:_ ~hide_tiles ~tiles_moved_from_hand ~is_winner =
   let tiles = tiles_from_hand hand in
   let tiles_moved : Rummikub.Tile.tile list = Obj.magic tiles_moved_from_hand in
   (* Filter out tiles that have been moved to staging during rearrange *)
@@ -323,7 +327,7 @@ let render_hand ~hand ~selected_tiles ~last_drawn_tile_index ~inject ~is_current
       ~attrs:[style_string "display: flex; justify-content: center; align-items: center; \
                             min-height: 50px; color: #28a745; font-weight: bold; \
                             font-size: 1.2rem; margin-top: 0.625rem;"]
-      [Vdom.Node.text "🎉 EMPTY HAND! 🎉"]
+      [Vdom.Node.text (if is_winner then "RUMMIKUB!" else "🎉 EMPTY HAND! 🎉")]
   else if hide_tiles then
     (* Show face-down tiles for hidden hands *)
     Vdom.Node.div
@@ -401,9 +405,9 @@ let render_player ~(player : Rummikub.State.player) ~is_current ~is_winner ~is_m
         [Vdom.Node.text (Printf.sprintf "%d tiles" 
           (List.length (Rummikub.State.TileMultiset.to_list player.hand)))];
       (if rearrange_mode && is_current then
-        render_draggable_hand ~hand:player.hand ~selected_tiles ~inject ~tiles_moved_from_hand
+        render_draggable_hand ~hand:player.hand ~selected_tiles ~inject ~tiles_moved_from_hand ~is_winner
       else
-        render_hand ~hand:player.hand ~selected_tiles ~last_drawn_tile_index ~inject ~is_current ~hide_tiles ~tiles_moved_from_hand);
+        render_hand ~hand:player.hand ~selected_tiles ~last_drawn_tile_index ~inject ~is_current ~hide_tiles ~tiles_moved_from_hand ~is_winner);
     ]
 
 let render_staging_area ~staging_melds ~drag_over_meld ~inject =
@@ -411,7 +415,7 @@ let render_staging_area ~staging_melds ~drag_over_meld ~inject =
     if List.is_empty staging_melds then
       [Vdom.Node.div
         ~attrs:[style_string "text-align: center; color: #6c757d; font-style: italic; padding: 1rem;"]
-        [Vdom.Node.text "Drag tiles from your hand or between melds to rearrange"]]
+        [Vdom.Node.text "Drag tiles within staging area to rearrange, or drag from hand to add tiles"]]
     else
       List.mapi staging_melds ~f:(fun idx meld ->
         let is_drop_target = match drag_over_meld with
@@ -826,7 +830,25 @@ let apply_action ~schedule_event (model : Model.t) (action : Action.t) : Model.t
         message = "Select game mode";
         game_mode = None;
         last_drawn_tile_index = None;
+        show_return_to_menu_confirm = false;
       }
+
+  | RequestReturnToMenu ->
+      { model with show_return_to_menu_confirm = true }
+
+  | ConfirmReturnToMenu ->
+      { model with
+        game_state = None;
+        selected_tiles = [];
+        tiles_played_this_turn = false;
+        message = "Select game mode";
+        game_mode = None;
+        last_drawn_tile_index = None;
+        show_return_to_menu_confirm = false;
+      }
+
+  | CancelReturnToMenu ->
+      { model with show_return_to_menu_confirm = false }
   
   | BotMove ->
       (match model.game_state, model.game_mode with
@@ -871,18 +893,25 @@ let apply_action ~schedule_event (model : Model.t) (action : Action.t) : Model.t
       | Some state ->
           if Rummikub.Rules.is_game_over state then model
           else
-            let new_rearrange_mode = not model.rearrange_mode in
-            { model with 
-              rearrange_mode = new_rearrange_mode;
-              selected_tiles = [];
-              staging_melds = if new_rearrange_mode then state.board else [];
-              dragging_tile = None;
-              drag_over_meld = None;
-              tiles_moved_from_hand = if new_rearrange_mode then [] else [];
-              jokers_taken_from_board = if new_rearrange_mode then [] else [];
-              message = if new_rearrange_mode then "Rearrange Mode: Drag tiles to rearrange. Drag from hand to add tiles."
-                        else "Rearrange mode cancelled";
-            }
+            let current_player = state.players.(state.turn) in
+            (* Prevent rearranging on first move (before meeting 30-point requirement) *)
+            if not current_player.met_initial_30 then
+              { model with message = "❌ You cannot rearrange tiles until you've made your first play of 30+ points." }
+            else if List.is_empty state.board then
+              { model with message = "❌ There are no tiles on the table to rearrange." }
+            else
+              let new_rearrange_mode = not model.rearrange_mode in
+              { model with 
+                rearrange_mode = new_rearrange_mode;
+                selected_tiles = [];
+                staging_melds = if new_rearrange_mode then state.board else [];
+                dragging_tile = None;
+                drag_over_meld = None;
+                tiles_moved_from_hand = if new_rearrange_mode then [] else [];
+                jokers_taken_from_board = if new_rearrange_mode then [] else [];
+                message = if new_rearrange_mode then "Rearrange Mode: Drag tiles within staging area to rearrange, or drag from hand to add tiles."
+                          else "Rearrange mode cancelled";
+              }
       )
   
   | AddToNewMeld ->
@@ -1453,10 +1482,19 @@ let apply_action ~schedule_event (model : Model.t) (action : Action.t) : Model.t
             | Some old_state -> old_state.turn <> state_cast.turn
             | None -> true
           in
+          (* Exit rearrange mode if it's a new player's turn who hasn't met initial 30 requirement *)
+          let current_player = state_cast.players.(state_cast.turn) in
+          let should_exit_rearrange = model.rearrange_mode && (turn_changed || not current_player.met_initial_30) in
           { model with 
             game_state = Some state_cast; 
             num_players = actual_num_players;
             tiles_played_this_turn = if turn_changed then false else model.tiles_played_this_turn;
+            rearrange_mode = if should_exit_rearrange then false else model.rearrange_mode;
+            staging_melds = if should_exit_rearrange then [] else model.staging_melds;
+            tiles_moved_from_hand = if should_exit_rearrange then [] else model.tiles_moved_from_hand;
+            jokers_taken_from_board = if should_exit_rearrange then [] else model.jokers_taken_from_board;
+            dragging_tile = if should_exit_rearrange then None else model.dragging_tile;
+            drag_over_meld = if should_exit_rearrange then None else model.drag_over_meld;
           }
       | None -> model)  (* No pending state - ignore *)
 
@@ -1602,6 +1640,7 @@ let component =
         show_multiplayer_ui = false;
         in_matchmaking = false;
         matchmaking_unsubscribe = None;
+        show_return_to_menu_confirm = false;
       } : Model.t)
       ~apply_action:(fun context model action ->
         let schedule_event action = 
@@ -2040,21 +2079,9 @@ let component =
                                   letter-spacing: 0.1rem;"]
             [Vdom.Node.text (if model.rearrange_mode then "⚙ Rearrange Mode" else "TABLE")];
           (if model.rearrange_mode then
-            Vdom.Node.div
-              ~attrs:[]
-              [
-                Vdom.Node.p
-                  ~attrs:[style_string "color: #aaa; margin-bottom: 10px; font-size: 0.85rem;"]
-                  [Vdom.Node.text "Click tiles from board below or drag from hand to add to staging area"];
-                render_staging_area ~staging_melds:model.staging_melds 
-                  ~drag_over_meld:model.drag_over_meld ~inject;
-                Vdom.Node.h4
-                  ~attrs:[style_string "color: #888; margin-top: 1rem; margin-bottom: 0.5rem; \
-                                        font-size: 0.75rem; text-transform: uppercase;"]
-                  [Vdom.Node.text "Original Board (Click to add)"];
-                render_board ~board:state.board ~rearrange_mode:true 
-                  ~selected_board_tiles:[] ~inject;
-              ]
+            (* In rearrange mode, only show staging area - no board display *)
+            render_staging_area ~staging_melds:model.staging_melds 
+              ~drag_over_meld:model.drag_over_meld ~inject
           else
             render_board ~board:state.board ~rearrange_mode:false 
               ~selected_board_tiles:[] ~inject);
@@ -2213,12 +2240,17 @@ let component =
                     Vdom.Attr.on_click (fun _ -> inject DrawTile);
                   ]
                   [Vdom.Node.text "Draw"]);
-              Vdom.Node.button
-                ~attrs:[
-                  style_string (btn_style "#fd7e14");
-                  Vdom.Attr.on_click (fun _ -> inject ToggleRearrangeMode);
-                ]
-                [Vdom.Node.text "Rearrange"];
+              (* Only show Rearrange button if player has met initial 30-point requirement AND board has tiles *)
+              (let current_player = state.players.(state.turn) in
+               if current_player.met_initial_30 && not (List.is_empty state.board) then
+                 Vdom.Node.button
+                   ~attrs:[
+                     style_string (btn_style "#fd7e14");
+                     Vdom.Attr.on_click (fun _ -> inject ToggleRearrangeMode);
+                   ]
+                   [Vdom.Node.text "Rearrange"]
+               else
+                 Vdom.Node.none);
             ]
       else
         Vdom.Node.div
@@ -2266,9 +2298,80 @@ let component =
       else
         Vdom.Node.none in
       
+      (* Menu button - only show in non-multiplayer games *)
+      let menu_button = match model.game_id with
+        | None ->
+            Vdom.Node.button
+              ~attrs:[
+                style_string "position: fixed; top: 1rem; right: 1rem; background: #1a1a1a; \
+                             color: white; border: 2px solid #dc3545; border-radius: 50%; \
+                             width: 48px; height: 48px; cursor: pointer; font-size: 1.2rem; \
+                             display: flex; align-items: center; justify-content: center; \
+                             z-index: 1000; box-shadow: 0 2px 8px rgba(0,0,0,0.3); \
+                             transition: all 0.2s ease;";
+                Vdom.Attr.on_click (fun _ -> inject Action.RequestReturnToMenu);
+                Vdom.Attr.title "Return to menu";
+              ]
+              [Vdom.Node.text "☰"]
+        | Some _ -> Vdom.Node.none
+      in
+      
+      (* Confirmation dialog *)
+      let confirmation_dialog = if model.show_return_to_menu_confirm then
+        Vdom.Node.div
+          ~attrs:[
+            style_string "position: fixed; top: 0; left: 0; right: 0; bottom: 0; \
+                         background: rgba(0,0,0,0.7); z-index: 2000; \
+                         display: flex; align-items: center; justify-content: center;";
+            Vdom.Attr.on_click (fun _ -> inject Action.CancelReturnToMenu);
+          ]
+          [
+                Vdom.Node.div
+              ~attrs:[
+                style_string "background: #fafafa; border-radius: 8px; padding: 2rem; \
+                             max-width: 400px; width: 90%; box-shadow: 0 4px 20px rgba(0,0,0,0.5);";
+                Vdom.Attr.on_click (fun evt -> 
+                  ignore (Js.Unsafe.meth_call evt "stopPropagation" [||]);
+                  Vdom.Effect.Ignore);
+              ]
+              [
+                Vdom.Node.h3
+                  ~attrs:[style_string "margin: 0 0 1rem 0; color: #1a1a1a; font-size: 1.2rem;"]
+                  [Vdom.Node.text "Return to Menu?"];
+                Vdom.Node.p
+                  ~attrs:[style_string "margin: 0 0 1.5rem 0; color: #666; font-size: 0.95rem;"]
+                  [Vdom.Node.text "Are you sure you want to return to the menu? Your current game progress will be lost."];
+                Vdom.Node.div
+                  ~attrs:[style_string "display: flex; gap: 0.75rem; justify-content: flex-end;"]
+                  [
+                    Vdom.Node.button
+                      ~attrs:[
+                        style_string "background: #f5f5f5; color: #333; border: 1px solid #ddd; \
+                                     border-radius: 4px; padding: 0.6rem 1.25rem; \
+                                     cursor: pointer; font-size: 0.9rem;";
+                        Vdom.Attr.on_click (fun _ -> inject Action.CancelReturnToMenu);
+                      ]
+                      [Vdom.Node.text "Cancel"];
+                    Vdom.Node.button
+                      ~attrs:[
+                        style_string "background: #dc3545; color: white; border: none; \
+                                     border-radius: 4px; padding: 0.6rem 1.25rem; \
+                                     cursor: pointer; font-size: 0.9rem; font-weight: 500;";
+                        Vdom.Attr.on_click (fun _ -> inject Action.ConfirmReturnToMenu);
+                      ]
+                      [Vdom.Node.text "Return to Menu"];
+                  ];
+              ];
+          ]
+      else
+        Vdom.Node.none
+      in
+      
       Vdom.Node.div
         ~attrs:[style_string container_style]
         [
+          menu_button;
+          confirmation_dialog;
           Vdom.Node.div
             ~attrs:[style_string game_container_style]
             [
