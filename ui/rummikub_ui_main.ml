@@ -2101,10 +2101,12 @@ let component =
             String.equal (Option.value_exn winner).name player.name in
           (* Determine if this player's hand should be visible:
              - In multiplayer (game_id is Some): only show YOUR hand (player_index)
+             - In VsComputer mode: only show YOUR hand (player 0), never show Computer's hand
              - In pass-and-play/local: only show current player's hand *)
-          let is_my_hand = match model.player_index, model.game_id with
-            | Some player_idx, Some _ -> idx = player_idx  (* Multiplayer: only your hand *)
-            | _ -> is_current  (* Local: current player's hand *)
+          let is_my_hand = match model.player_index, model.game_id, model.game_mode with
+            | Some player_idx, Some _, _ -> idx = player_idx  (* Multiplayer: only your hand *)
+            | _, _, Some VsComputer -> idx = 0  (* VsComputer: only player 0 (You), never Computer *)
+            | _, _, _ -> is_current  (* Pass-and-play/local: current player's hand *)
           in
           let hide_this_player_tiles = not is_my_hand in
           (* In multiplayer, only allow interaction if it's this player's turn AND it's your hand *)
